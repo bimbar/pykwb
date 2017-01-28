@@ -29,6 +29,9 @@ STATUS_PACKET_DONE = 255
 PROP_PACKET_SENSE = 0
 PROP_PACKET_CTRL = 1
 
+PROP_SENSOR_TEMPERATURE = 0
+PROP_SENSOR_FLAG = 1
+
 TCP_IP = "10.0.2.30"
 TCP_PORT = 23
 
@@ -36,6 +39,48 @@ SERIAL_INTERFACE = "/dev/ttyUSB0"
 SERIAL_SPEED = 19200
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class KWBSensor:
+    
+    def __init__(self, _packet, _index, _name, _sensor_type):
+        
+        self._packet = _packet
+        self._index = _index
+        self._name = _name
+        self._sensor_type = _sensor_type
+        self._value = 0
+
+    @property
+    def index(self):
+        return self._index
+    
+    @property
+    def name(self):
+        return self._name
+    
+    @property
+    def sensor_type(self):
+        return self._sensor_type
+    
+    @property
+    def unit_of_measurement(self):
+        if (self._sensor_type == PROP_SENSOR_TEMPERATURE):
+            return "°C"
+        else:
+            return ""
+    
+    @property
+    def value(self):
+        return self._value
+    
+    @value.setter
+    def value(self, _value):
+        self._value=_value
+
+    def __str__(self):
+        return self.name + ": I: " + str(self.index) + " T: " + str(self.sensor_type) + "(" + str(self.unit_of_measurement) + ") V: " + str(self.value)
+
 
 
 class KWBEasyfire:
@@ -50,6 +95,24 @@ class KWBEasyfire:
         self._serial_speed = _serial_speed
         self._logdatalen = 1024
         self._logdata = []
+        
+        self._sense_sensor = []
+
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 0, "Flow", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 1, "Return", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 2, "Boiler 0", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 3, "Furnace", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 4, "Buffer Tank 2", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 5, "Buffer Tank 1", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 6, "Outside", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 7, "Exhaust", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 8, "?", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 12, "Stoker Channel", PROP_SENSOR_TEMPERATURE))
+
+        self._ctrl_sensor = []
+
+        self._ctrl_sensor.append(KWBSensor(PROP_PACKET_CTRL, 17, "Return Mixer", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBSensor(PROP_PACKET_CTRL, 25, "?Resupply", PROP_SENSOR_FLAG))
         
         self._open_connection()
     
@@ -79,7 +142,7 @@ class KWBEasyfire:
         checksum = checksum + value
         if (checksum > 255):
             checksum = checksum - 255
-        print("C: " + str(checksum) + " V: " + str(value))
+#        print("C: " + str(checksum) + " V: " + str(value))
         return checksum
 
    
@@ -162,7 +225,7 @@ class KWBEasyfire:
                 else:
                     status = STATUS_WAITING
             elif (status == STATUS_SENSE_PRE_2):
-                length = read + 2
+                length = read + 1
                 status = STATUS_SENSE_PRE_LENGTH
             elif (status == STATUS_SENSE_PRE_LENGTH):
                 if (read == 16):
@@ -214,7 +277,7 @@ class KWBEasyfire:
         
         offset = 4
         i = 0
-        # 5 offset, 4 unknown at the end
+
         datalen = len(data) - offset - 6
         tempCount = int(datalen / 2)
         temp=[]
@@ -225,16 +288,10 @@ class KWBEasyfire:
         
         print("T: " + str(temp))
         
-        print("Vorlauf:     " + str(temp[0]))
-        print("Rücklauf:    " + str(temp[1]))
-        print("Boiler0:     " + str(temp[2]))
-        print("Kessel:      " + str(temp[3]))
-        print("Puffer 2:    " + str(temp[4]))
-        print("Puffer 1:    " + str(temp[5]))
-        print("Aussen:      " + str(temp[6]))
-        print("Rauch:       " + str(temp[7]))
-        print("?????:       " + str(temp[8]))
-        print("Stokerkanal: " + str(temp[12]))
+        for sensor in self._sense_sensor:
+            sensor.value = temp[sensor.index]
+        
+        print(str(self))
     
     def _decode_ctrl_packet(self, packet):
         
@@ -242,21 +299,20 @@ class KWBEasyfire:
             b = packet[i]
             print("Byte " + str(i) + ": " + str((b>>7)&1) + str((b>>6)&1) + str((b>>5)&1) + str((b>>4)&1) + str((b>>3)&1) + str((b>>2)&1) + str((b>>1)&1) + str(b&1))
 
-        print("Mischer RLA:      " + str((packet[2]>>2)&1))
-        print("?Raumaustragung:  " + str((packet[3]>>2)&1))
+        for sensor in self._ctrl_sensor:
+            sensor.value = (packet[sensor.index // 8] >> (sensor.index % 8)) & 1
 
-        #print("Boiler0pump:  " + str((packet[1]>>5)&1))
-        #print("HK2pump:      " + str((packet[1]>>6)&1))
-        #print("HK1pump:      " + str((packet[1]>>7)&1))
         
-        #print("AscheAustrag: " + str((packet[2])&1))
-        #print("Reinigung:    " + str((packet[2]>>1)&1))
-        #print("HK2Mischer:   " + str((packet[2]>>4)&1))
-        #print("HK1Mischer:   " + str((packet[2]>>6)&1))
-
-        #print("Hauptrelais:  " + str((packet[3]>>4)&1))
-        #print("Raumaustrag:  " + str((packet[3]>>6)&1))
+    def __str__(self):
+        ret = ""
         
+        for sensor in self._sense_sensor:
+            ret = ret + str(sensor) + "\n"
+        
+        for sensor in self._ctrl_sensor:
+            ret = ret + str(sensor) + "\n"
+        
+        return ret
         
     
     def do_it(self):
