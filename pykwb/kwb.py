@@ -8,6 +8,8 @@ import sys
 import serial
 import socket
 import struct
+import threading
+import time
 
 
 PROP_MODE_SERIAL = 0
@@ -41,7 +43,7 @@ SERIAL_SPEED = 19200
 _LOGGER = logging.getLogger(__name__)
 
 
-class KWBSensor:
+class KWBEasyfireSensor:
     
     def __init__(self, _packet, _index, _name, _sensor_type):
         
@@ -98,26 +100,28 @@ class KWBEasyfire:
         
         self._sense_sensor = []
 
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 0, "Flow", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 1, "Return", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 2, "Boiler 0", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 3, "Furnace", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 4, "Buffer Tank 2", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 5, "Buffer Tank 1", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 6, "Outside", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 7, "Exhaust", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 8, "?", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBSensor(PROP_PACKET_SENSE, 12, "Stoker Channel", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "Flow", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 1, "Return", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 2, "Boiler 0", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 3, "Furnace", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 4, "Buffer Tank 2", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 5, "Buffer Tank 1", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 6, "Outside", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 7, "Exhaust", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 8, "?", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 12, "Stoker Channel", PROP_SENSOR_TEMPERATURE))
 
         self._ctrl_sensor = []
 
-        self._ctrl_sensor.append(KWBSensor(PROP_PACKET_CTRL, 17, "Return Mixer", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBSensor(PROP_PACKET_CTRL, 25, "?Resupply", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 17, "Return Mixer", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 25, "?Resupply", PROP_SENSOR_FLAG))
+
+        self._thread = threading.Thread(target=self.run)
         
         self._open_connection()
     
     def __del__(self):
-        print(self._logdata)
+#        print(self._logdata)
         self._close_connection()
     
     def _open_connection(self):
@@ -225,7 +229,7 @@ class KWBEasyfire:
                 else:
                     status = STATUS_WAITING
             elif (status == STATUS_SENSE_PRE_2):
-                length = read + 1
+                length = read
                 status = STATUS_SENSE_PRE_LENGTH
             elif (status == STATUS_SENSE_PRE_LENGTH):
                 if (read == 16):
@@ -267,8 +271,8 @@ class KWBEasyfire:
             else:
                 status = STATUS_WAITING
         
-        print("MODE: " + str(mode) + " Checksum: " + str(checksum) + " / " + str(checksum_calculated) + " Count: " + str(cnt) + " Length: " + str(len(packet)))
-        print("Packet: " + str(packet))
+#        print("MODE: " + str(mode) + " Checksum: " + str(checksum) + " / " + str(checksum_calculated) + " Count: " + str(cnt) + " Length: " + str(len(packet)))
+#        print("Packet: " + str(packet))
         
         return (mode, packet)
     
@@ -286,21 +290,24 @@ class KWBEasyfire:
             n = i * 2 + offset
             temp.append(self._decode_temp(data[n], data[n+1]))
         
-        print("T: " + str(temp))
+#        print("T: " + str(temp))
         
         for sensor in self._sense_sensor:
             sensor.value = temp[sensor.index]
         
-        print(str(self))
+#        print(str(self))
     
     def _decode_ctrl_packet(self, packet):
         
         for i in range(5):
             b = packet[i]
-            print("Byte " + str(i) + ": " + str((b>>7)&1) + str((b>>6)&1) + str((b>>5)&1) + str((b>>4)&1) + str((b>>3)&1) + str((b>>2)&1) + str((b>>1)&1) + str(b&1))
+#            print("Byte " + str(i) + ": " + str((b>>7)&1) + str((b>>6)&1) + str((b>>5)&1) + str((b>>4)&1) + str((b>>3)&1) + str((b>>2)&1) + str((b>>1)&1) + str(b&1))
 
         for sensor in self._ctrl_sensor:
             sensor.value = (packet[sensor.index // 8] >> (sensor.index % 8)) & 1
+
+    def get_sensors(self):
+        return self._sense_sensor + self._ctrl_sensor
 
         
     def __str__(self):
@@ -314,19 +321,27 @@ class KWBEasyfire:
         
         return ret
         
-    
-    def do_it(self):
-        while (1):
+    def run(self):
+        while (self._run):
             (mode, packet) = self._read_packet()
             if (mode == PROP_PACKET_SENSE):
-                print("SENSE")
                 self._decode_sense_packet(packet)
             elif (mode == PROP_PACKET_CTRL):
-                print("CTRL")
                 self._decode_ctrl_packet(packet)
-            
+    
+    def run_thread(self):
+        self._run = True
+        self._thread.start()
+    
+    def stop_thread(self):
+        self._run = False
         
-kwb = KWBEasyfire(PROP_MODE_TCP, "10.0.2.30", 23)
-kwb.do_it()
 
+def main():
+    kwb = KWBEasyfire(PROP_MODE_TCP, "10.0.2.30", 23)
+    kwb.run_thread()
+    time.sleep(5)
+    kwb.stop_thread()
 
+if __name__ == "__main__":
+    main()
