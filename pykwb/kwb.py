@@ -100,7 +100,7 @@ class KWBEasyfire:
         
         self._sense_sensor = []
 
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "Flow", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "Supply", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 1, "Return", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 2, "Boiler 0", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 3, "Furnace", PROP_SENSOR_TEMPERATURE))
@@ -108,13 +108,13 @@ class KWBEasyfire:
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 5, "Buffer Tank 1", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 6, "Outside", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 7, "Exhaust", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 8, "?", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 8, "Unknown", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 12, "Stoker Channel", PROP_SENSOR_TEMPERATURE))
 
         self._ctrl_sensor = []
 
         self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 17, "Return Mixer", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 25, "?Resupply", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 25, "Unknown Resupply", PROP_SENSOR_FLAG))
 
         self._thread = threading.Thread(target=self.run)
         
@@ -331,6 +331,7 @@ class KWBEasyfire:
     
     def run_thread(self):
         self._run = True
+        self._thread.setDaemon(True)
         self._thread.start()
     
     def stop_thread(self):
