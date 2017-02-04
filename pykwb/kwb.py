@@ -164,7 +164,7 @@ class KWBEasyfire:
 
     def _debug(self, level, text):
         """Output a debug log text."""
-        if (level >= self._debug_level):
+        if (level <= self._debug_level):
             print(text)
 
     def __del__(self):
@@ -349,9 +349,9 @@ class KWBEasyfire:
         self._debug(PROP_LOGLEVEL_DEBUG, "T: " + str(temp))
 
         for sensor in self._sense_sensor:
-            if (sensor.type == PROP_SENSOR_FLAG):
+            if (sensor.sensor_type == PROP_SENSOR_TEMPERATURE):
                 sensor.value = temp[sensor.index]
-            elif (sensor.type == PROP_SENSOR_RAW):
+            elif (sensor.sensor_type == PROP_SENSOR_RAW):
                 sensor.value = packet
 
         self._debug(PROP_LOGLEVEL_DEBUG, str(self))
@@ -364,9 +364,9 @@ class KWBEasyfire:
             self._debug(PROP_LOGLEVEL_DEBUG, "Byte " + str(i) + ": " + str((input_bit >> 7) & 1) + str((input_bit >> 6) & 1) + str((input_bit >> 5) & 1) + str((input_bit >> 4) & 1) + str((input_bit >> 3) & 1) + str((input_bit >> 2) & 1) + str((input_bit >> 1) & 1) + str(input_bit & 1))
 
         for sensor in self._ctrl_sensor:
-            if (sensor.type == PROP_SENSOR_FLAG):
+            if (sensor.sensor_type == PROP_SENSOR_FLAG):
                 sensor.value = (packet[sensor.index // 8] >> (sensor.index % 8)) & 1
-            elif (sensor.type == PROP_SENSOR_RAW):
+            elif (sensor.sensor_type == PROP_SENSOR_RAW):
                 sensor.value = packet
 
     def get_sensors(self):
