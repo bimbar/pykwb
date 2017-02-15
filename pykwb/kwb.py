@@ -81,6 +81,7 @@ class KWBEasyfireSensor:
         self._name = _name
         self._sensor_type = _sensor_type
         self._value = None
+        self._available = False
 
     @property
     def index(self):
@@ -113,7 +114,13 @@ class KWBEasyfireSensor:
     @value.setter
     def value(self, _value):
         """Sets the value of the sensor. Unit is unit_of_measurement."""
+        self._available = True
         self._value = _value
+
+    @property
+    def available(self) -> bool:
+        """Return if sensor is available."""
+        return self._available
 
     def __str__(self):
         """Returns an informational text representation of the sensor."""
