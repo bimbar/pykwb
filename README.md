@@ -4,6 +4,7 @@ Library to interpret the serial output of a KWB Easyfire Pellet Central Heating 
 Setup
 
 python3 setup.py build
+
 python3 setup.py install
 
 or
