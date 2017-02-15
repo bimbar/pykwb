@@ -80,7 +80,7 @@ class KWBEasyfireSensor:
         self._index = _index
         self._name = _name
         self._sensor_type = _sensor_type
-        self._value = 0
+        self._value = None
 
     @property
     def index(self):
