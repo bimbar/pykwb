@@ -285,18 +285,16 @@ class KWBEasyfire:
                 if (read == 2):
                     status = STATUS_SENSE_PRE_2
                     checksum_calculated = read
-                elif (read == 21):
-                    status = STATUS_CTRL_PRE_2
-                else:
+                elif (read == 0):
                     status = STATUS_WAITING
+                else:
+                    status = STATUS_CTRL_PRE_2
             elif (status == STATUS_SENSE_PRE_2):
                 length = read
                 status = STATUS_SENSE_PRE_LENGTH
             elif (status == STATUS_SENSE_PRE_LENGTH):
-                if (read == 16):
-                    status = STATUS_SENSE_PRE_3
-                else:
-                    status = STATUS_WAITING
+                read = read
+                status = STATUS_SENSE_PRE_3
             elif (status == STATUS_SENSE_PRE_3):
                 cnt = read
                 i = 0
@@ -311,10 +309,8 @@ class KWBEasyfire:
                 mode = PROP_PACKET_SENSE
                 status = STATUS_PACKET_DONE
             elif (status == STATUS_CTRL_PRE_2):
-                if (read == 17):
-                    status = STATUS_CTRL_PRE_3
-                else:
-                    status = STATUS_WAITING
+                read = read
+                status = STATUS_CTRL_PRE_3
             elif (status == STATUS_CTRL_PRE_3):
                 cnt = read
                 i = 0
