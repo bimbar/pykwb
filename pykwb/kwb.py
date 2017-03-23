@@ -421,15 +421,15 @@ class KWBEasyfire:
 
 def main():
     parser = argparse.ArgumentParser()
-    group_tcp =  parser.add_argument_group('TCP')
+    group_tcp = parser.add_argument_group('TCP')
     group_tcp.add_argument('--tcp', dest='mode', action='store_const', const=PROP_MODE_TCP, help="Set tcp mode")
     group_tcp.add_argument('--host', dest='hostname', help="Specify hostname", default='')
     group_tcp.add_argument('--port', dest='port', help="Specify port", default=23, type=int)
-    group_serial =  parser.add_argument_group('Serial')
-    group_serial.add_argument('--serial', dest='mode',action='store_const', const=PROP_MODE_SERIAL, help="Set serial mode")
+    group_serial = parser.add_argument_group('Serial')
+    group_serial.add_argument('--serial', dest='mode', action='store_const', const=PROP_MODE_SERIAL, help="Set serial mode")
     group_serial.add_argument('--interface', dest='interface', help="Specify interface", default='')
-    group_file =  parser.add_argument_group('File')
-    group_file.add_argument('--file', dest='mode',action='store_const', const=PROP_MODE_FILE, help="Set file mode")
+    group_file = parser.add_argument_group('File')
+    group_file.add_argument('--file', dest='mode', action='store_const', const=PROP_MODE_FILE, help="Set file mode")
     group_file.add_argument('--name', dest='file', help="Specify file name", default='')
     args = parser.parse_args()
 
@@ -438,7 +438,7 @@ def main():
     kwb.run_thread()
     time.sleep(5)
     kwb.stop_thread()
-    print str(kwb)
+    print(kwb)
 
 
 if __name__ == "__main__":
