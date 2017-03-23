@@ -30,6 +30,7 @@ import socket
 import time
 import threading
 import serial
+import struct
 
 
 PROP_LOGLEVEL_TRACE = 5
@@ -41,6 +42,7 @@ PROP_LOGLEVEL_NONE = 0
 
 PROP_MODE_SERIAL = 0
 PROP_MODE_TCP = 1
+PROP_MODE_FILE = 2
 
 STATUS_WAITING = 0
 STATUS_PRE_1 = 1
@@ -131,7 +133,7 @@ class KWBEasyfireSensor:
 class KWBEasyfire:
     """Communicats with the KWB Easyfire unit."""
 
-    def __init__(self, _mode, _ip="", _port=0, _serial_device="", _serial_speed=19200):
+    def __init__(self, _mode, _ip="", _port=0, _serial_device="", _serial_speed=19200, _file_path=""):
         """Initialize the Object."""
 
         self._debug_level = PROP_LOGLEVEL_NONE
@@ -142,6 +144,7 @@ class KWBEasyfire:
         self._port = _port
         self._serial_device = _serial_device
         self._serial_speed = _serial_speed
+        self._file_path = _file_path
         self._logdatalen = 1024
         self._logdata = []
 
@@ -186,6 +189,8 @@ class KWBEasyfire:
         elif (self._mode == PROP_MODE_TCP):
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._socket.connect((self._ip, self._port))
+        elif (self._mode == PROP_MODE_FILE):
+            self._file = open(self._file_path, "r")
 
     def _close_connection(self):
         """Close the connection to the easyfire unit."""
@@ -193,6 +198,8 @@ class KWBEasyfire:
             self._serial.close()
         elif (self._mode == PROP_MODE_TCP):
             self._socket.close()
+        elif (self._mode == PROP_MODE_FILE):
+            self._file.close()
 
     @staticmethod
     def _byte_rot_left(byte, distance):
@@ -216,6 +223,8 @@ class KWBEasyfire:
             to_return = self._serial.read(1)
         elif (self._mode == PROP_MODE_TCP):
             to_return = self._socket.recv(1)
+        elif (self._mode == PROP_MODE_FILE):
+            to_return = struct.pack("B", int(self._file.readline()))
 
         _LOGGER.debug("READ: " + str(ord(to_return)))
         self._logdata.append(ord(to_return))
@@ -410,7 +419,8 @@ class KWBEasyfire:
 
 def main():
     """Main method for debug purposes."""
-    kwb = KWBEasyfire(PROP_MODE_TCP, "10.0.2.30", 23)
+    #kwb = KWBEasyfire(PROP_MODE_TCP, "<ip>", 23)
+    kwb = KWBEasyfire(PROP_MODE_FILE, "", 23, "", 0, "<file_path>")
     kwb.run_thread()
     time.sleep(5)
     kwb.stop_thread()
