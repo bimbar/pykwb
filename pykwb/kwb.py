@@ -31,8 +31,8 @@ import logging
 import socket
 import time
 import threading
-import serial
 import argparse
+import serial
 
 
 PROP_LOGLEVEL_TRACE = 5
@@ -420,6 +420,7 @@ class KWBEasyfire:
 
 
 def main():
+    """Main method for debug purposes."""
     parser = argparse.ArgumentParser()
     group_tcp = parser.add_argument_group('TCP')
     group_tcp.add_argument('--tcp', dest='mode', action='store_const', const=PROP_MODE_TCP, help="Set tcp mode")
@@ -433,7 +434,6 @@ def main():
     group_file.add_argument('--name', dest='file', help="Specify file name", default='')
     args = parser.parse_args()
 
-    """Main method for debug purposes."""
     kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, 0, args.file)
     kwb.run_thread()
     time.sleep(5)
