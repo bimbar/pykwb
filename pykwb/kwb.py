@@ -25,12 +25,12 @@ SOFTWARE.
 Support for KWB Easyfire central heating units.
 """
 
+import struct
 import logging
 import socket
 import time
 import threading
 import serial
-import struct
 
 
 PROP_LOGLEVEL_TRACE = 5
@@ -419,7 +419,6 @@ class KWBEasyfire:
 
 def main():
     """Main method for debug purposes."""
-    #kwb = KWBEasyfire(PROP_MODE_TCP, "<ip>", 23)
     kwb = KWBEasyfire(PROP_MODE_FILE, "", 23, "", 0, "<file_path>")
     kwb.run_thread()
     time.sleep(5)
