@@ -273,6 +273,7 @@ class KWBEasyfire:
         checksum = 0
         checksum_calculated = 0
         length = 0
+        version = 0
         i = 0
         cnt = 0
         packet = bytearray(0)
@@ -304,7 +305,7 @@ class KWBEasyfire:
                 length = read
                 status = STATUS_SENSE_PRE_LENGTH
             elif (status == STATUS_SENSE_PRE_LENGTH):
-                read = read
+                version = read
                 status = STATUS_SENSE_PRE_3
             elif (status == STATUS_SENSE_PRE_3):
                 cnt = read
@@ -320,7 +321,7 @@ class KWBEasyfire:
                 mode = PROP_PACKET_SENSE
                 status = STATUS_PACKET_DONE
             elif (status == STATUS_CTRL_PRE_2):
-                read = read
+                version = read
                 status = STATUS_CTRL_PRE_3
             elif (status == STATUS_CTRL_PRE_3):
                 cnt = read
@@ -339,12 +340,12 @@ class KWBEasyfire:
             else:
                 status = STATUS_WAITING
 
-        self._debug(PROP_LOGLEVEL_DEBUG, "MODE: " + str(mode) + " Checksum: " + str(checksum) + " / " + str(checksum_calculated) + " Count: " + str(cnt) + " Length: " + str(len(packet)))
+        self._debug(PROP_LOGLEVEL_DEBUG, "MODE: " + str(mode) + " Version: " + str(version) + " Checksum: " + str(checksum) + " / " + str(checksum_calculated) + " Count: " + str(cnt) + " Length: " + str(len(packet)))
         self._debug(PROP_LOGLEVEL_TRACE, "Packet: " + str(packet))
 
-        return (mode, packet)
+        return (mode, version, packet)
 
-    def _decode_sense_packet(self, packet):
+    def _decode_sense_packet(self, version, packet):
         """Decode a sense packet into the list of sensors."""
 
         data = self._sense_packet_to_data(packet)
@@ -370,7 +371,7 @@ class KWBEasyfire:
 
         self._debug(PROP_LOGLEVEL_DEBUG, str(self))
 
-    def _decode_ctrl_packet(self, packet):
+    def _decode_ctrl_packet(self, version, packet):
         """Decode a control packet into the list of sensors."""
 
         for i in range(5):
@@ -402,11 +403,11 @@ class KWBEasyfire:
     def run(self):
         """Main thread that reads from input and populates the sensors."""
         while (self._run_thread):
-            (mode, packet) = self._read_packet()
+            (mode, version, packet) = self._read_packet()
             if (mode == PROP_PACKET_SENSE):
-                self._decode_sense_packet(packet)
+                self._decode_sense_packet(version, packet)
             elif (mode == PROP_PACKET_CTRL):
-                self._decode_ctrl_packet(packet)
+                self._decode_ctrl_packet(version, packet)
 
     def run_thread(self):
         """Run the main thread."""
