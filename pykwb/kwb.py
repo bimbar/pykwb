@@ -419,6 +419,10 @@ class KWBEasyfire:
         """Stop the main thread."""
         self._run_thread = False
 
+    def is_alive(self):
+        """Determine if thread is alive."""
+        return self._thread.is_alive()
+
 
 def main():
     """Main method for debug purposes."""

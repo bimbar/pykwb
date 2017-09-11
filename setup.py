@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name = 'pykwb',
-    version = '0.0.9',
+    version = '0.0.10',
     packages = ['pykwb'],
     install_requires = ['pyserial>=3.0.1'],
     description = 'KWB Easyfire serial library, for inclusion into homeassistant',
