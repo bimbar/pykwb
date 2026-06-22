@@ -153,7 +153,7 @@ class KWBEasyfire:
         self._sense_sensor = []
 
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "RAW SENSE", PROP_SENSOR_RAW))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "Supply", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "Supply 1", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 1, "Return", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 2, "Boiler 0", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 3, "Furnace", PROP_SENSOR_TEMPERATURE))
@@ -161,7 +161,10 @@ class KWBEasyfire:
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 5, "Buffer Tank 1", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 6, "Outside", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 7, "Exhaust", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 8, "Unknown", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 8, "Furnace Control", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 9, "Remote 1", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 10, "Remote 2", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 11, "Supply 2", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 12, "Stoker Channel", PROP_SENSOR_TEMPERATURE))
 
         self._ctrl_sensor = []
