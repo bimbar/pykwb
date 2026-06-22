@@ -138,7 +138,7 @@ class KWBEasyfire:
     def __init__(self, _mode, _ip="", _port=0, _serial_device="", _serial_speed=19200, _file_path=""):
         """Initialize the Object."""
 
-        self._debug_level = PROP_LOGLEVEL_NONE
+        self._debug_level = PROP_LOGLEVEL_DEBUG
         self._run_thread = True
 
         self._mode = _mode
@@ -153,7 +153,7 @@ class KWBEasyfire:
         self._sense_sensor = []
 
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "RAW SENSE", PROP_SENSOR_RAW))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "Supply 1", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "Heating Circuit 1 Supply", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 1, "Return", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 2, "Boiler 0", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 3, "Furnace", PROP_SENSOR_TEMPERATURE))
@@ -162,18 +162,34 @@ class KWBEasyfire:
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 6, "Outside", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 7, "Exhaust", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 8, "Furnace Control", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 9, "Remote 1", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 10, "Remote 2", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 11, "Supply 2", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 9, "Heating Circuit 1 Remote", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 10, "Heating Circuit 2 Remote", PROP_SENSOR_TEMPERATURE))
+        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 11, "Heating Circuit 2 Supply", PROP_SENSOR_TEMPERATURE))
         self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 12, "Stoker Channel", PROP_SENSOR_TEMPERATURE))
 
         self._ctrl_sensor = []
 
         self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 0, "RAW CTRL", PROP_SENSOR_RAW))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 17, "Return Mixer", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 25, "Unknown Resupply", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 0, "Ignition", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 1, "Fire Damper", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 2, "Alarm 2", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 3, "Alarm 1", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 4, "Power", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 5, "Boiler 0 Pump", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 6, "Heating Circuit 2 Pump", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 7, "Heating Circuit 1 Pump", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 8, "Ash Discharge", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 9, "Cleaning", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 10, "Return Mixer On", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 11, "Return Mixer Closed", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 12, "Heating Circuit 2 Mixer On", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 13, "Heating Circuit 2 Mixer Closed", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 14, "Heating Circuit 1 Mixer On", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 15, "Heating Circuit 1 Mixer Closed", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 20, "Main Relais", PROP_SENSOR_FLAG))
+        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 21, "Room Discharge", PROP_SENSOR_FLAG))
 
-        self._thread = threading.Thread(target=self.run)
+        self._thread = threading.Thread(target=self.run, daemon=True)
 
         self._open_connection()
 
@@ -229,7 +245,10 @@ class KWBEasyfire:
         elif (self._mode == PROP_MODE_TCP):
             to_return = self._socket.recv(1)
         elif (self._mode == PROP_MODE_FILE):
-            to_return = struct.pack("B", int(self._file.readline()))
+            read = self._file.readline()
+            if (read == ''):
+                raise Exception("EOF")
+            to_return = struct.pack("B", int(read))
 
         _LOGGER.debug("READ: " + str(ord(to_return)))
         self._logdata.append(ord(to_return))
@@ -415,7 +434,6 @@ class KWBEasyfire:
     def run_thread(self):
         """Run the main thread."""
         self._run_thread = True
-        self._thread.setDaemon(True)
         self._thread.start()
 
     def stop_thread(self):
