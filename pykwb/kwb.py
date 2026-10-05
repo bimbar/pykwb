@@ -53,19 +53,6 @@ PROP_MODE_SERIAL = 0
 PROP_MODE_TCP = 1
 PROP_MODE_FILE = 2
 
-STATUS_WAITING = 0
-STATUS_PRE_1 = 1
-STATUS_SENSE_PRE_2 = 2
-STATUS_SENSE_PRE_3 = 3
-STATUS_SENSE_PRE_LENGTH = 6
-STATUS_SENSE_DATA = 8
-STATUS_SENSE_CHECKSUM = 9
-STATUS_CTRL_PRE_2 = 10
-STATUS_CTRL_PRE_3 = 11
-STATUS_CTRL_DATA = 12
-STATUS_CTRL_CHECKSUM = 19
-STATUS_PACKET_DONE = 255
-
 PROP_PACKET_SENSE = 32
 PROP_PACKET_CTRL = 33
 PROP_PACKET_SENSE_64 = 64
@@ -78,10 +65,6 @@ PROP_SENSOR_PRESSURE = 4
 PROP_SENSOR_DURATION = 5
 PROP_SENSOR_SPEED = 6
 
-TCP_IP = "127.0.0.1"
-TCP_PORT = 23
-
-SERIAL_INTERFACE = "/dev/ttyUSB0"
 SERIAL_SPEED = 19200
 
 _LOGGER = logging.getLogger(__name__)
@@ -344,20 +327,6 @@ class KWBEasyfire:
         if len(self._logdata) > self._logdatalen:
             self._logdata = self._logdata[-self._logdatalen:]
         self._debug(PROP_LOGLEVEL_TRACE, "READ: " + str(value))
-
-    @staticmethod
-    def _sense_packet_to_data(packet):
-        """Remove the escape pad bytes from a sense packet (\2\0 -> \2)."""
-        data = bytearray(0)
-        last = 0
-        i = 0
-        while (i < len(packet)):
-            if not (last == 2 and packet[i] == 0):
-                data.append(packet[i])
-            last = packet[i]
-            i += 1
-
-        return data
 
     @staticmethod
     def _decode_temp(byte_1, byte_2):

@@ -60,6 +60,35 @@ Add `--log-level debug` to a run command to change verbosity. Levels: `none`,
 
 ## Development
 
+### Linting
+
+Run all lint checks:
+
+```sh
+python3 -m pip install tox
+tox -e lint
+```
+
+To run the tools individually, install development dependencies. Ruff checks unused imports,
+local variables, and unpacked variables; Vulture also checks unused module-level
+and class-level variables and other dead code across the source and tests:
+
+```sh
+python3 -m pip install -r requirements_test.txt
+python3 -m ruff check pykwb tests setup.py
+python3 -m vulture
+```
+
+Prefix intentionally unused variables with an underscore (for example, `_unused`).
+Ruff does not check unused function arguments; Vulture can report them.
+Lint failures return a nonzero exit code; both checks run on pushes and pull
+requests in GitHub Actions. Vulture uses a 60% confidence threshold to include
+unused globals. It cannot prove whether external consumers or dynamic lookups
+use a symbol: review findings before removing public API symbols. For a confirmed
+false positive, add an exact name to `tool.vulture.ignore_names` in
+`pyproject.toml` with a comment explaining the external use. Avoid broad patterns;
+exceptions apply to matching names throughout the project.
+
 ### Testing
 
 ```sh
