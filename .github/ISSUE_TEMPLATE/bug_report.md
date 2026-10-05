@@ -11,7 +11,6 @@ assignees: ''
 
 **What actually happened?**
 
-**Does the [old pykwb](https://github.com/bimbar/pykwb) work as expected?**
 
 **What is the exact model of your heater?**
 
