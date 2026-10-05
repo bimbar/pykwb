@@ -59,7 +59,7 @@ class MessageSensorTests(unittest.TestCase):
                 self.assertEqual(sensor.unit_of_measurement, units)
 
     def test_duration_unit_variants_preserve_scale(self):
-        for units in ('ms', 'msec', 'sec'):
+        for units in ('ms', 'sec'):
             with self.subTest(units=units):
                 sensor = KWBEasyfireSensor.from_message({
                     'message_id': '33', 'offset': '0', 'name_en': 'Duration',

@@ -99,7 +99,6 @@ class KWBEasyfireSensor:
                 'C': PROP_SENSOR_TEMPERATURE,
                 'mbar': PROP_SENSOR_PRESSURE,
                 'ms': PROP_SENSOR_DURATION,
-                'msec': PROP_SENSOR_DURATION,
                 'sec': PROP_SENSOR_DURATION,
                 'rpm': PROP_SENSOR_SPEED,
             }.get(message['units'], PROP_SENSOR_NUMBER)
