@@ -1,4 +1,4 @@
-"""Async listening uses the same framing and sensors as the synchronous reader."""
+"""Async listening uses the wire framing and sensors."""
 import asyncio
 import os
 import socket
@@ -6,7 +6,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from pykwb.kwb import KWBEasyfire, PROP_MODE_FILE, PROP_MODE_TCP, PROP_MODE_SERIAL, PROP_PACKET_CTRL
+from pykwb.kwb import KWBEasyfire, PROP_MODE_FILE, PROP_MODE_TCP, PROP_MODE_SERIAL
+from pykwb.messages import FrameType
 from test_temperatures import frame
 
 
@@ -35,7 +36,8 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         reader._debug_level = 0
         self.addAsyncCleanup(reader.close)
         with patch('threading.Thread.start') as start:
-            await reader.listen_forever()
+            with self.assertRaises(EOFError):
+                await reader.listen_forever()
         start.assert_not_called()
         self.assertIsNotNone(self.furnace(reader))
         self.assertIsNone(reader._file)
@@ -57,7 +59,7 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(reader._reader, sender)
         self.assertIsNone(self.furnace(reader))
 
-    async def test_partial_escape_survives_listen_for_deadline(self):
+    async def test_partial_escape_is_discarded_at_listen_for_deadline(self):
         reader, sender = self.tcp_reader()
         wire = self.temperature_frame()
         split = wire.index(b'\x02\x00') + 1
@@ -65,11 +67,15 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         await reader.listen_for(0.02)
         self.assertIsNone(self.furnace(reader))
         sender.feed_data(wire[split:])
+        await reader.listen_for(0.02)
+        self.assertIsNone(self.furnace(reader))
+        sender.feed_data(wire)
         sender.feed_eof()
-        await reader.listen_forever()
+        with self.assertRaises(EOFError):
+            await reader.listen_forever()
         self.assertEqual(self.furnace(reader), 74.1)
 
-    async def test_cancelled_listener_can_resume_partial_packet(self):
+    async def test_cancelled_listener_discards_partial_packet(self):
         reader, sender = self.tcp_reader()
         wire = self.temperature_frame()
         sender.feed_data(wire[:8])
@@ -80,17 +86,22 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertIs(reader._reader, sender)
         sender.feed_data(wire[8:])
+        await reader.listen_for(0.02)
+        self.assertIsNone(self.furnace(reader))
+        sender.feed_data(wire)
         sender.feed_eof()
-        await reader.listen_for(0.2)
+        with self.assertRaises(EOFError):
+            await reader.listen_for(0.2)
         self.assertEqual(self.furnace(reader), 74.1)
 
     async def test_eof_after_unknown_packet_keeps_sensor_values(self):
         reader, sender = self.tcp_reader()
-        sender.feed_data(self.temperature_frame() + frame(87, bytes(24), sense=False))
+        sender.feed_data(self.temperature_frame() + frame(87, bytes(24), frame_type=FrameType.CONTROL))
         sender.feed_eof()
-        await reader.listen_forever()
+        with self.assertRaises(EOFError):
+            await reader.listen_forever()
         self.assertEqual(self.furnace(reader), 74.1)
-        self.assertIsNone(reader._sensors[PROP_PACKET_CTRL][0].value)
+        self.assertIsNone(reader._sensors[33][0].value)
 
     async def test_message_64_updates_extension_temperatures(self):
         reader, sender = self.tcp_reader()
@@ -99,7 +110,8 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         payload[21:23] = b'\xff\xc9'
         sender.feed_data(self.temperature_frame() + frame(64, payload))
         sender.feed_eof()
-        await reader.listen_forever()
+        with self.assertRaises(EOFError):
+            await reader.listen_forever()
         values = {s.key: s.value for s in reader.get_sensors() if s.key}
         self.assertEqual(values['loop_4_out_temp'], 60.7)
         self.assertEqual(values['loop_3_out_temp'], -5.5)
@@ -123,7 +135,7 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         writer.close.assert_called_once()
         writer.wait_closed.assert_awaited_once()
 
-    async def test_real_tcp_stream_resumes_and_closes(self):
+    async def test_real_tcp_stream_discards_partial_frame_and_closes(self):
         receiver, sender = socket.socketpair()
         receiver.setblocking(False)
         self.addCleanup(sender.close)
@@ -142,8 +154,12 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
             await reader.listen_for(0.02)
             self.assertIsNone(self.furnace(reader))
             sender.sendall(wire[8:])
+            await reader.listen_for(0.02)
+            self.assertIsNone(self.furnace(reader))
+            sender.sendall(wire)
             sender.shutdown(socket.SHUT_WR)
-            await asyncio.wait_for(reader.listen_forever(), 1)
+            with self.assertRaises(EOFError):
+                await asyncio.wait_for(reader.listen_forever(), 1)
             opened.assert_awaited_once()
         self.assertEqual(self.furnace(reader), 74.1)
         self.assertEqual(receiver.fileno(), -1)
@@ -164,26 +180,11 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         await reader.close()
         self.assertFalse(serial_port.is_open)
 
-    async def test_zero_and_invalid_durations(self):
-        reader, sender = self.tcp_reader()
-        sender.feed_data(self.temperature_frame())
-        await reader.listen_for(0)
-        self.assertIsNone(self.furnace(reader))
-        for duration in (-1, float('inf'), float('nan')):
-            with self.subTest(duration=duration), self.assertRaises(ValueError):
-                await reader.listen_for(duration)
-        sender.feed_eof()
-        await reader.listen_forever()
-        self.assertEqual(self.furnace(reader), 74.1)
-
     async def test_deadline_under_continuous_ready_input(self):
-        reader = KWBEasyfire(-1)
-        reader._debug_level = 0
-        reader._mode = PROP_MODE_FILE
-        # A ready source must still yield to cancellation, even without frames.
-        with patch.object(reader, '_read_async_byte', return_value=0):
-            await reader.listen_for(0.02)
-        reader._mode = -1
+        reader, sender = self.tcp_reader()
+        sender.feed_data(bytes(100000))
+        await reader.listen_for(0.02)
+        self.assertIsNone(self.furnace(reader))
 
 
 if __name__ == '__main__':

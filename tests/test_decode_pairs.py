@@ -1,22 +1,23 @@
-"""Exploratory decoding is opt-in, bounded, and independent of sensor maps."""
+"""Standalone exploratory decoding and the retained CLI argument."""
 from contextlib import redirect_stdout
 from io import StringIO
 import unittest
 from unittest.mock import patch
 
-from pykwb.kwb import KWBEasyfire, PROP_PACKET_CTRL, main
+from pykwb.kwb import KWBEasyfire, main
 from pykwb.decode import decode_pairs
 
 
 class PairDecodeTests(unittest.TestCase):
     def test_both_alignments_and_trailing_byte(self):
-        reader = KWBEasyfire(-1, _config={'decode': [87]})
+        reader = KWBEasyfire(-1)
         payload = bytes.fromhex('00 00 00 02 5f ff c9 05 14')
         before = [s.value for s in reader.get_sensors()]
         output = StringIO()
         with redirect_stdout(output):
-            reader._decode_packet(PROP_PACKET_CTRL, 87, payload)
-        self.assertEqual(output.getvalue().splitlines(), [
+            lines = list(decode_pairs(87, payload))
+        self.assertEqual(output.getvalue(), '')
+        self.assertEqual(lines, [
             'ID 87 two-byte decode from offset 3:',
             '  Offset 3: raw=607 temperature=60.7 mbar=0.607 rpm=364.2 ms=6070',
             '  Offset 5: raw=-55 temperature=-5.5 mbar=65.481 rpm=39288.6 ms=654810',
@@ -35,33 +36,25 @@ class PairDecodeTests(unittest.TestCase):
                 lines = list(decode_pairs(64, bytes(3) + pair))
                 self.assertTrue(lines[1].endswith(expected), lines[1])
 
-    def test_default_and_nonselected_ids_do_not_decode(self):
-        for config in (None, {'decode': []}, {'decode': [65]}):
-            reader = KWBEasyfire(-1, _config=config)
-            with patch('pykwb.kwb.decode_pairs') as decode:
-                reader._decode_packet(PROP_PACKET_CTRL, 87, bytes(10))
-            decode.assert_not_called()
-
-    def test_short_packets_and_logging_disabled(self):
-        reader = KWBEasyfire(-1, _config={'decode': [87]})
-        reader._debug_level = 0
-        output = StringIO()
-        with redirect_stdout(output):
-            for length in range(10):
-                reader._decode_packet(PROP_PACKET_CTRL, 87, bytes(length))
-        self.assertEqual(output.getvalue(), '')
+    def test_short_payloads_have_no_pairs(self):
+        for length in range(5):
+            with self.subTest(length=length):
+                self.assertEqual(list(decode_pairs(87, bytes(length))), [
+                    'ID 87 two-byte decode from offset 3:',
+                    'ID 87 two-byte decode from offset 4:',
+                ])
 
     def test_cli_list_and_default(self):
-        for args, expected in (([], []), (['--decode'], []),
-                               (['--decode', '64', '87'], [64, 87])):
+        for args in ([], ['--decode'], ['--decode', '64', '87'],
+                     ['--decode', '-1', '256']):
             with self.subTest(args=args), \
                     patch('sys.argv', ['kwb', '--no-summary'] + args), \
                     patch('pykwb.kwb.KWBEasyfire', autospec=True) as factory:
                 main()
-            self.assertEqual(factory.call_args.kwargs['_config']['decode'], expected)
+            self.assertNotIn('_config', factory.call_args.kwargs)
 
-    def test_cli_rejects_invalid_ids(self):
-        for value in ('-1', '256', 'abc', '32.5'):
+    def test_cli_rejects_noninteger_ids(self):
+        for value in ('abc', '32.5'):
             with self.subTest(value=value), patch('sys.argv', ['kwb', '--decode', value]), \
                     patch('sys.stderr'), patch('pykwb.kwb.KWBEasyfire') as factory:
                 with self.assertRaises(SystemExit) as error:

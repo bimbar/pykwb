@@ -17,7 +17,7 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 32,sense,boiler_temp,Kessel Temperatur,Boiler Temp,int,1,12,2,,0.1,C,,sensor,measurement,temperature,"1, 9, 10"
 32,sense,buffer_2_temp_c,Puffer 2 (unten) Temperatur,Buffer 2 Temp,int,1,14,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
 32,sense,buffer_1_temp_c,Puffer 1 (oben) Temperatur,Buffer 1 Temp,int,1,16,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
-32,sense,loop_1_ambient_temp_c,Außen Temperatur HK1,Loop 1 Ambient Temp,int,1,18,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
+32,sense,loop_1_outdoor_temp_c,Außen Temperatur HK1,Loop 1 Outdoor Temp,int,1,18,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
 32,sense,exhaust_gas_temp,Rauchgastemperatur,Exhaust Gas Temp,int,1,20,2,,0.1,C,,sensor,measurement,temperature,"1, 9, 10"
 32,sense,cpu_temp,Proztemperatur,CPU Temp,int,1,22,2,,0.1,C,,sensor,measurement,temperature,"1, 10"
 32,sense,,HK1 Fernverstellung Temperatur,Loop 1 Remote Adjustment Temp,int,1,24,2,,0.1,C,,sensor,measurement,temperature,10
@@ -60,7 +60,7 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 16,sense,tank_temp,T_Boiler,Tank Temp,int,1,9,2,,0.1,C,,,measurement,temperature,2
 16,sense,,T_Boiler,Tank Temp,int,,9,2,,0.1,C,,,measurement,temperature,8
 16,sense,boiler_temp,T_Kessel,Boiler Temp,int,1,11,2,,0.1,C,,,measurement,temperature,2
-16,sense,,T_Kessel,Boiler Temp,int,,11,2,,0.1,C,,,measurement,temperature,8
+16,sense,boiler_temp,T_Kessel,Boiler Temp,int,,11,2,,0.1,C,,,measurement,temperature,8
 16,sense,,T_Puffer_Unten,,int,,13,2,,0.1,C,,,measurement,temperature,8
 16,sense,,T_Puffer_Oben,,int,,15,2,,0.1,C,,,measurement,temperature,8
 16,sense,outdoor_temp,T_Outside,Outdoor Temp,int,1,17,2,,0.1,C,,,measurement,temperature,2
@@ -82,7 +82,7 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 16,sense,,HK1 Vorlauf Temperatur,,int,1,11,2,,0.1,C,,,measurement,temperature,4
 16,sense,,Rücklauf Temperatur,Boiler Return Flow Temp,int,1,13,2,,0.1,C,,,measurement,temperature,4
 16,sense,,Boiler 0 Temperatur,Tank 0 Temp,int,1,15,2,,0.1,C,,,measurement,temperature,4
-16,sense,,KesselTemperatur,Boiler Temp,int,1,17,2,,0.1,C,,,measurement,temperature,4
+16,sense,boiler_temp,KesselTemperatur,Boiler Temp,int,1,17,2,,0.1,C,,,measurement,temperature,4
 16,sense,,Puffer 2 (unten) Temperatur,Buffer 2 Bottom Temp,int,1,19,2,,0.1,C,,,measurement,temperature,4
 16,sense,,Puffer 1 (oben) Temperatur,Buffer 1 Top Temp,int,1,21,2,,0.1,C,,,measurement,temperature,4
 16,sense,,Außen Temperatur,Outdoor Temp,int,1,23,2,,0.1,C,,,measurement,temperature,4
@@ -100,7 +100,7 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 17,control,cleaning_on,Reinigung,Cleaning On,bit,,2,1,,,,,,measurement,,2
 17,control,loop_1_mixer_on,HK1_Mischer,Loop 1 Mixer,bit,,2,6,,,,,,measurement,,2
 17,control,,Hauptrelais,,bit,,3,4,,,,,,measurement,,2
-17,control,,Raumaustragung,Ash Clearing On,bit,,3,6,,,,,,measurement,,2
+17,control,ash_clearing_on,Raumaustragung,Ash Clearing On,bit,,3,6,,,,,,measurement,,2
 17,control,ash_can_ok,Aschebehaelter,Ash Can OK,bit,,3,6,,,,,,measurement,,2
 17,control,pellet_level_ok,Pellet_Vorrat,Pellet Level OK,bit,,4,3,,,,,,measurement,,2
 17,control,,Zündung,Ignition On,bit,,6,,0,,,,,measurement,,4
@@ -120,7 +120,7 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 17,control,,HK1 Mischer ein,Loop 1 Mixer Open,bit,,7,,6,,,,,measurement,,4
 17,control,,HK1 Mischer zu,Loop 1 Mixer Closed,bit,,7,,7,,,,,measurement,,4
 17,control,,Hauptreials,,bit,,8,,4,,,,,measurement,,4
-17,control,,Raumaustragung,Ash Clearing On,bit,,8,,5,,,,,measurement,,4
+17,control,ash_clearing_on,Raumaustragung,Ash Clearing On,bit,,8,,5,,,,,measurement,,4
 17,control,,Rücklaufpumpe,,???,???,9,1,,0.3921568627,%,,,measurement,,4
 17,control,,Gebläsestufe,,???,???,10,1,,0.1960784314,Stufe,,,measurement,,4
 17,control,,Saugzugstufe,,???,???,11,1,,0.1960784314,Stufe,,,measurement,,4
@@ -131,7 +131,7 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 17,control,,Stokerantrieb ein,,???,???,15,1,,0 => 232 ???,,,,measurement,,4
 48,sense,,T_Ruecklauf_Kessel,Boiler Return Flow Temp,int,1,7,2,,0.1,C,,,measurement,temperature,6
 48,sense,,T_Boiler,,int,1,9,2,,0.1,C,,,measurement,temperature,6
-48,sense,,T_Kessel,Boiler Temp,int,1,11,2,,0.1,C,,,measurement,temperature,6
+48,sense,boiler_temp,T_Kessel,Boiler Temp,int,1,11,2,,0.1,C,,,measurement,temperature,6
 48,sense,,T_Buffer_Down,,int,1,13,2,,0.1,C,,,measurement,temperature,6
 48,sense,,T_Puffer_Oben,,int,1,15,2,,0.1,C,,,measurement,temperature,6
 48,sense,,T_Puffer_Mitte,,int,1,29,2,,0.1,C,,,measurement,temperature,6
@@ -152,10 +152,11 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 17,control,,Ascheaustragung,Ash Removal On,bit,,2,,0,,,,,measurement,,7
 17,control,,Cleaning On,,bit,,2,,1,,,,,measurement,,7
 17,control,,HK2_Mischer,Loop 2 Mixer,bit,,2,,4,,,,,measurement,,7
-17,control,,HK1_Mischer,,bit,,2,,6,,,,,measurement,,7
+17,control,,HK1_Mischer,Loop 1 Mixer,bit,,2,,6,,,,,measurement,,7
 17,control,,Hauptrelais,,bit,,3,,4,,,,,measurement,,7
 17,control,,Pumpe_Puffer,Buffer Pump On,bit,,4,,1,,,,,measurement,,7
 17,control,,Kessel_AN,Boiler On,bit,,15,,0,,,,,measurement,,7
-17,control,,Raumaustragung,Ash Clearing On,bit,,3,,6,,,,,measurement,,7
+17,control,ash_clearing_on,Raumaustragung,Ash Clearing On,bit,,3,,6,,,,,measurement,,7
 64,sense,loop_4_out_temp,,Loop 4 Out Temp,int,1,19,2,,0.1,C,,,measurement,temperature,10
 64,sense,loop_3_out_temp,,Loop 3 Out Temp,int,1,21,2,,0.1,C,,,measurement,temperature,10
+80,sense,loop_4_room_temp,,Loop 4 Room Temp,int,1,18,2,,0.1,C,,,measurement,temperature,

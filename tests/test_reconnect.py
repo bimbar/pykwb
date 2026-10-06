@@ -1,9 +1,10 @@
-"""Async connection lifecycle and packet-health reconnect coverage."""
+"""Async connection lifecycle and transport reconnect coverage."""
 import asyncio
 import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+from pykwb.messages import FrameType, Message, parse_message
 from pykwb.kwb import KWBEasyfire, PROP_MODE_TCP
 from test_temperatures import frame
 
@@ -11,7 +12,7 @@ from test_temperatures import frame
 def reader_with_config(**settings):
     reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {
         'reconnect': True, 'retry_initial': 0.005, 'retry_max': 0.01,
-        'stale_timeout': 0.02, **settings}})
+        **settings}})
     reader._debug_level = 0
     return reader
 
@@ -39,16 +40,15 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
                     connect.assert_awaited_once()
                 await reader.close()
 
-    async def test_backoff_caps_and_resets_only_on_valid_packet(self):
+    async def test_backoff_caps_and_resets_on_connection_success(self):
         reader = reader_with_config(retry_initial=1, retry_max=4)
         self.assertEqual([reader._next_retry_delay() for _ in range(4)], [1, 2, 4, 4])
-        wire = frame(32, bytes(32))
-        for byte in wire[:-1] + bytes((wire[-1] ^ 1,)):
-            reader._consume_byte(byte)
-        self.assertEqual(reader._next_retry_delay(), 4)
-        for byte in wire:
-            reader._consume_byte(byte)
+        stream, writer = stream_pair()
+        with patch('pykwb.kwb.asyncio.open_connection', new_callable=AsyncMock,
+                   return_value=(stream, writer)):
+            await reader._open_connection()
         self.assertEqual(reader._next_retry_delay(), 1)
+        await reader.close()
 
     async def test_cancellation_interrupts_retry_delay(self):
         reader = reader_with_config(retry_initial=10, retry_max=10)
@@ -57,34 +57,46 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(reader.listen_for(0.02), 1)
             connect.assert_awaited_once()
 
-    async def test_disconnect_discards_partial_packet_and_closes_stream(self):
+    async def test_disconnect_closes_stream_and_keeps_sensor_state(self):
         reader = reader_with_config()
         reader._reader, reader._writer = stream_pair()
         writer = reader._writer
-        reader._decode_sense_packet(32, bytes(73))
-        for byte in frame(32, bytes(73))[:10]:
-            reader._consume_byte(byte)
-        self.assertIsNotNone(reader._packet_parser)
+        message = Message(32, 1, bytes(73), FrameType.SENSE)
+        reader._update_sensors(parse_message(reader._sensors, message))
+        before = [(s.value, s.available) for s in reader.get_sensors()]
         await reader._connection_lost(ConnectionResetError())
-        self.assertIsNone(reader._packet_parser)
         self.assertIsNone(reader._reader)
-        self.assertTrue(all(s.value is None and not s.available for s in reader.get_sensors()))
+        self.assertEqual([(s.value, s.available) for s in reader.get_sensors()], before)
         writer.close.assert_called_once()
         writer.wait_closed.assert_awaited_once()
 
-    async def test_stale_garbage_and_failed_retries_respect_deadline(self):
-        reader = reader_with_config()
-        reader._reader, reader._writer = stream_pair()
-        reader._reader.feed_data(bytes(2000))
-        reader._decode_sense_packet(32, bytes(73))
-        before = time.monotonic()
-        with patch.object(reader, '_open_connection', new_callable=AsyncMock,
-                          side_effect=ConnectionRefusedError()) as connect:
-            await reader.listen_for(0.08)
-            self.assertGreaterEqual(connect.await_count, 2)
-        self.assertLess(time.monotonic() - before, 1)
-        self.assertIsNone(reader._reader)
-        self.assertTrue(all(not s.available for s in reader.get_sensors()))
+    async def test_idle_and_invalid_input_never_reconnect_or_clear_sensors(self):
+        # A legacy stale_timeout setting must not restore packet-health reconnects.
+        for garbage in (b'', bytes(2000)):
+            reader = reader_with_config(stale_timeout=0.01)
+            reader._reader, reader._writer = stream_pair()
+            stream = reader._reader
+            stream.feed_data(garbage)
+            message = Message(32, 1, bytes(73), FrameType.SENSE)
+            reader._update_sensors(parse_message(reader._sensors, message))
+            values = [(s.value, s.available) for s in reader.get_sensors()]
+            before = time.monotonic()
+            with patch.object(reader, '_open_connection', new_callable=AsyncMock) as connect:
+                await reader.listen_for(0.04)
+                connect.assert_not_awaited()
+            self.assertLess(time.monotonic() - before, 1)
+            self.assertIs(reader._reader, stream)
+            self.assertEqual([(s.value, s.available) for s in reader.get_sensors()], values)
+            payload = bytearray(32)
+            payload[12:14] = b'\x02\xe5'
+            stream.feed_data(frame(32, payload))
+            # End the capture after the fresh packet without triggering a retry.
+            reader._config['connection']['reconnect'] = False
+            stream.feed_eof()
+            with self.assertRaises(EOFError):
+                await asyncio.wait_for(reader.listen_forever(), 1)
+            self.assertEqual(next(s.value for s in reader.get_sensors() if s.key == 'boiler_temp'), 74.1)
+            await reader.close()
 
     async def test_connect_timeout_and_cancellation(self):
         for cancel in (False, True):
@@ -125,7 +137,8 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
         reader._reader, reader._writer = stream_pair()
         reader._reader.feed_eof()
         with patch.object(reader, '_open_connection', new_callable=AsyncMock) as connect:
-            await reader.listen_forever()
+            with self.assertRaises(EOFError):
+                await reader.listen_forever()
             connect.assert_not_awaited()
         self.assertIsNone(reader._reader)
 
@@ -133,11 +146,12 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
         reader = reader_with_config()
         first, first_writer = stream_pair()
         second, second_writer = stream_pair()
-        first.feed_data(frame(32, bytes(32))[:8])
+        interrupted = frame(32, bytes(32))
+        first.feed_data(interrupted[:8])
         first.feed_eof()
         payload = bytearray(32)
         payload[12:14] = b'\x02\xe5'
-        second.feed_data(frame(32, payload))
+        second.feed_data(interrupted[8:] + frame(32, payload))
         with patch('pykwb.kwb.asyncio.open_connection', new_callable=AsyncMock,
                    side_effect=[(first, first_writer), (second, second_writer)]) as connect:
             await reader.listen_for(0.015)

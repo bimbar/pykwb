@@ -30,6 +30,7 @@ import asyncio
 import logging
 import time
 import argparse
+from copy import copy
 import serial_asyncio_fast
 
 # Make testing easier for HomeAssistant HACS integration
@@ -39,8 +40,12 @@ if __name__ == "__main__" and not __package__:
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pykwb.decode import decode_pairs, decode_temperature
-from pykwb.messages import load_messages
+from pykwb.messages import (
+    FrameType, Message, add_to_checksum, load_messages, parse_message,
+    _byte_rot_left as _byte_rot_left,
+    PROP_SENSOR_TEMPERATURE, PROP_SENSOR_FLAG, PROP_SENSOR_RAW,
+    PROP_SENSOR_NUMBER, PROP_SENSOR_PRESSURE, PROP_SENSOR_DURATION, PROP_SENSOR_SPEED,
+)
 
 PROP_LOGLEVEL_TRACE = 5
 PROP_LOGLEVEL_DEBUG = 4
@@ -53,30 +58,17 @@ PROP_MODE_SERIAL = 0
 PROP_MODE_TCP = 1
 PROP_MODE_FILE = 2
 
-PROP_PACKET_SENSE = 32
-PROP_PACKET_CTRL = 33
-PROP_PACKET_SENSE_64 = 64
-
-PROP_SENSOR_TEMPERATURE = 0
-PROP_SENSOR_FLAG = 1
-PROP_SENSOR_RAW = 2
-PROP_SENSOR_NUMBER = 3
-PROP_SENSOR_PRESSURE = 4
-PROP_SENSOR_DURATION = 5
-PROP_SENSOR_SPEED = 6
-
 SERIAL_SPEED = 19200
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class KWBEasyfireSensor:
     """This Class represents as single sensor."""
 
-    def __init__(self, _packet, _index, _name, _sensor_type, _bit=None,
+    def __init__(self, _message_id, _index, _name, _sensor_type, _bit=None,
                  _length=2, _signed=True, _scale=0.1, _units="", _key=""):
 
-        self._packet = _packet
+        self._message_id = _message_id
         self._index = _index
         self._bit = _bit
         self._name = _name
@@ -87,11 +79,11 @@ class KWBEasyfireSensor:
         self._signed = _signed
         self._scale = _scale
         self._units = _units
-        self._key = _key
+        self._key = _key or _name.lower().replace(' ', '_')
 
     @classmethod
     def from_message(cls, message):
-        """Create a sensor from one packet definition in messages.csv."""
+        """Create a sensor from one message definition in messages.csv."""
         if message['type'] == 'bit':
             sensor_type = PROP_SENSOR_FLAG
         elif message['type'] == 'int':
@@ -117,28 +109,8 @@ class KWBEasyfireSensor:
 
     @property
     def key(self):
-        """Return the optional CSV key (not necessarily unique)."""
+        """Return the sensor identity, using its name when no CSV key is set."""
         return self._key
-
-    def decode(self, packet):
-        """Update from an unescaped, big-endian payload."""
-        if self.sensor_type == PROP_SENSOR_RAW:
-            self.value = packet
-            return
-        offset = self.index
-        length = 1 if self.sensor_type == PROP_SENSOR_FLAG else self._length
-        if offset is None or offset < 0 or offset + length > len(packet):
-            self.value = None
-        elif self.sensor_type == PROP_SENSOR_FLAG:
-            self.value = ((packet[offset] >> self.bit) & 1
-                          if self.bit is not None and 0 <= self.bit < 8 else None)
-        else:
-            value = int.from_bytes(packet[offset:offset + length], 'big',
-                                   signed=self._signed)
-            if self.sensor_type == PROP_SENSOR_TEMPERATURE and value == 1300:
-                self.value = None
-            else:
-                self.value = round(value * self._scale, 10)
 
     @property
     def index(self):
@@ -201,19 +173,16 @@ class KWBEasyfire:
         self._config['connection'] = {
             'reconnect': False,
             'connect_timeout': 5,
-            'stale_timeout': 30,
             'retry_initial': 1,
             'retry_max': 30,
             **self._config.get('connection', {}),
         }
         self._debug_level = PROP_LOGLEVEL_INFO
-        self._packet_parser = None
         self._reader = None
         self._writer = None
         self._file = None
         self._retry_delay = self._config['connection']['retry_initial']
-        self._last_valid_packet = time.monotonic()
-        for key in ('connect_timeout', 'stale_timeout', 'retry_initial', 'retry_max'):
+        for key in ('connect_timeout', 'retry_initial', 'retry_max'):
             if not 0 < self._config['connection'][key] < float('inf'):
                 raise ValueError("connection.%s must be finite and positive" % key)
 
@@ -226,21 +195,25 @@ class KWBEasyfire:
         self._logdatalen = 1024
         self._logdata = []
 
-        self._sensors = {
-            PROP_PACKET_SENSE: [
-                KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "RAW SENSE", PROP_SENSOR_RAW),
-            ],
-            PROP_PACKET_CTRL: [
-                KWBEasyfireSensor(PROP_PACKET_CTRL, 0, "RAW CTRL", PROP_SENSOR_RAW),
-            ],
-            PROP_PACKET_SENSE_64: [
-                KWBEasyfireSensor(PROP_PACKET_SENSE_64, 0, "RAW SENSE 64", PROP_SENSOR_RAW),
-            ],
-        }
+        self._sensors: dict[int, list[KWBEasyfireSensor]] = {}
+        self._sensors_by_key: dict[str, KWBEasyfireSensor] = {}
         for message in load_messages():
             message_id = int(message['message_id'])
-            if message_id in self._sensors:
-                self._sensors[message_id].append(KWBEasyfireSensor.from_message(message))
+            if message_id not in self._sensors:
+                self._sensors[message_id] = [KWBEasyfireSensor(
+                    message_id, 0, "RAW %d" % message_id, PROP_SENSOR_RAW)]
+            # Historical reference rows with unknown types have no decoder yet.
+            if message['type'] == '???':
+                _LOGGER.debug("Skipping undocumented field for message %d: %s",
+                              message_id, message['name_de'])
+                continue
+            self._sensors[message_id].append(KWBEasyfireSensor.from_message(message))
+
+        for sensors in self._sensors.values():
+            for sensor in sensors:
+                # Keep final state separate from each message's field layout.
+                if sensor.key not in self._sensors_by_key:
+                    self._sensors_by_key[sensor.key] = copy(sensor)
 
     def _debug(self, level, text):
         """Output a debug log text."""
@@ -261,17 +234,16 @@ class KWBEasyfire:
             raise ValueError("Unsupported input mode")
         self._reader, self._writer = await asyncio.wait_for(
             connect, self._config['connection']['connect_timeout'])
-        self._last_valid_packet = time.monotonic()
+        self._retry_delay = self._config['connection']['retry_initial']
 
     async def close(self):
         """Release input resources after stopping/awaiting the listener task.
 
-        Cancelling listening alone preserves the connection and partial frame
-        for a subsequent listen on the same event loop. Explicit close resets it.
+        Cancelling listening discards the in-progress frame but keeps the
+        connection open. Explicit close releases the connection as well.
         """
         writer, self._writer = self._writer, None
         self._reader = None
-        self._packet_parser = None
         if self._file is not None:
             self._file.close()
             self._file = None
@@ -288,8 +260,6 @@ class KWBEasyfire:
     async def _connection_lost(self, error):
         self._debug(PROP_LOGLEVEL_WARN, "TCP disconnected: %s" % error)
         await self.close()
-        for sensor in self.get_sensors():
-            sensor.value = None
 
     def _next_retry_delay(self):
         settings = self._config['connection']
@@ -297,27 +267,6 @@ class KWBEasyfire:
         self._retry_delay = min(delay * 2, settings['retry_max'])
         self._debug(PROP_LOGLEVEL_INFO, "TCP reconnect in %g seconds" % delay)
         return delay
-
-    def _stale_remaining(self):
-        remaining = (self._config['connection']['stale_timeout']
-                     - (time.monotonic() - self._last_valid_packet))
-        if remaining <= 0:
-            raise TimeoutError("No valid TCP packet within stale_timeout")
-        return remaining
-
-    @staticmethod
-    def _byte_rot_left(byte, distance):
-        """Rotate a byte left by distance bits."""
-        return ((byte << distance) | (byte >> (8 - distance))) % 256
-
-    def _add_to_checksum(self, checksum, value):
-        """Add a byte to the checksum."""
-        checksum = self._byte_rot_left(checksum, 1)
-        checksum = checksum + value
-        if (checksum > 255):
-            checksum = checksum - 255
-        self._debug(PROP_LOGLEVEL_TRACE, "C: " + str(checksum) + " V: " + str(value))
-        return checksum
 
     def _record_byte(self, value):
         """Record diagnostics for every input transport."""
@@ -327,122 +276,91 @@ class KWBEasyfire:
             self._logdata = self._logdata[-self._logdatalen:]
         self._debug(PROP_LOGLEVEL_TRACE, "READ: " + str(value))
 
-    @staticmethod
-    def _decode_temp(byte_1, byte_2):
-        """Decode a signed short temperature as two bytes to a single number."""
-        return decode_temperature(byte_1, byte_2)
-
-    async def _read_packet(self):
-        """Read a checksum-valid frame and return its unescaped payload."""
+    async def _read_message(self) -> Message:
+        """Return a validated Message or raise; retry TCP failures when enabled."""
         while True:
-            # Buffered input must still yield to deadlines and cancellation.
-            await asyncio.sleep(0)
-            packet = self._consume_byte(await self._read_async_byte())
-            if packet is not None:
-                return packet
+            try:
+                return await self._collect_frame()
+            except (EOFError, OSError, asyncio.TimeoutError) as error:
+                if self._reconnect_enabled():
+                    await self._connection_lost(error)
+                    await asyncio.sleep(self._next_retry_delay())
+                    continue
+                await self.close()
+                raise
 
-    def _consume_byte(self, value):
-        """Retain partial framing state across reads and listening sessions."""
-        if self._packet_parser is None:
-            self._packet_parser = self._parse_packet()
-            next(self._packet_parser)
-        try:
-            self._packet_parser.send(value)
-        except StopIteration as complete:
-            self._packet_parser = None
-            self._last_valid_packet = time.monotonic()
-            self._retry_delay = self._config['connection']['retry_initial']
-            return complete.value
-        return None
+    async def _collect_frame(self) -> Message:
+        """Collect and validate a frame before parsing it.
 
-    def _parse_packet(self):
-        """Accept bytes via send(), returning one valid, unescaped frame."""
+        Partial input is local to this call and discarded when it is cancelled
+        or the connection fails. Invalid frames are skipped until a valid one
+        arrives. Return unescaped payload and header metadata.
+        """
         pending_length = None
         while True:
             if pending_length is None:
-                if (yield) != 2:
+                if (await self._read_async_byte()) != 2:
                     continue
-                length = (yield)
+                length = (await self._read_async_byte())
             else:
                 length = pending_length
                 pending_length = None
 
             if length == 0:
                 continue
-            mode = PROP_PACKET_CTRL
+            # The first 0x02 was already consumed, including on resynchronization.
+            # A single marker is CONTROL; an additional marker identifies SENSE.
+            # This metadata does not select a decoder. Tolerate repeated markers.
+            frame_type = FrameType.CONTROL
             while length == 2:
-                mode = PROP_PACKET_SENSE
-                length = (yield)
+                frame_type = FrameType.SENSE
+                length = (await self._read_async_byte())
             if length < 5:
                 continue
 
-            version = (yield)
-            counter = (yield)
+            version = (await self._read_async_byte())
+            counter = (await self._read_async_byte())
             checksum = 2
             for value in (length, version, counter):
-                checksum = self._add_to_checksum(checksum, value)
+                checksum = add_to_checksum(checksum, value)
+                self._debug(PROP_LOGLEVEL_TRACE, "C: " + str(checksum) + " V: " + str(value))
 
             # Length includes the four header bytes and the checksum, but
-            # excludes the extra sense header and payload escape padding.
-            packet = bytearray()
+            # excludes the additional header marker and payload escape padding.
+            payload = bytearray()
             valid = True
             for _ in range(length - 5):
-                value = (yield)
-                packet.append(value)
-                checksum = self._add_to_checksum(checksum, value)
+                value = (await self._read_async_byte())
+                payload.append(value)
+                checksum = add_to_checksum(checksum, value)
+                self._debug(PROP_LOGLEVEL_TRACE, "C: " + str(checksum) + " V: " + str(value))
                 if value == 2:
-                    padding = (yield)
+                    padding = (await self._read_async_byte())
                     if padding != 0:
                         # An unescaped 2 starts a new frame. Reuse its next
-                        # byte as the length (or extra sense header), rather
+                        # byte as the length (or additional header marker), rather
                         # than discarding the beginning of that frame.
                         pending_length = padding
                         valid = False
                         break
             if not valid:
                 continue
-            if (yield) != checksum:
+            if (await self._read_async_byte()) != checksum:
                 continue
 
-            packet_type = "SENSE" if mode == PROP_PACKET_SENSE else "CTRL"
-            summary = "\n\nPacket ID %d %s counter=%d length=%d" % (
-                version, packet_type, counter, len(packet))
-            if self._debug_level >= PROP_LOGLEVEL_DEBUG:
-                summary += " payload=" + packet.hex(" ")
-            self._debug(PROP_LOGLEVEL_INFO, summary)
-            return (mode, version, packet)
+            return Message(version, counter, bytes(payload), frame_type)
 
-    def _decode_sense_packet(self, version, packet):
-        """Decode boiler temperatures using the message ID's payload layout."""
-        if version not in (PROP_PACKET_SENSE, PROP_PACKET_SENSE_64):
-            return
-        for sensor in self._sensors[version]:
-            sensor.decode(packet)
-
-        for sensor in self._sensors[version]:
+    def _log_message(self, message: Message) -> None:
+        """Log the completed message and its results using the existing format."""
+        summary = "\n\nPacket ID %d frame_type=%s counter=%d length=%d" % (
+            message.message_id, message.frame_type.name, message.counter, len(message.payload))
+        if self._debug_level >= PROP_LOGLEVEL_DEBUG:
+            summary += " payload=" + message.payload.hex(" ")
+        self._debug(PROP_LOGLEVEL_INFO, summary)
+        for sensor in self._sensors.get(message.message_id, []):
             level = (PROP_LOGLEVEL_DEBUG if sensor.sensor_type == PROP_SENSOR_RAW
                      else PROP_LOGLEVEL_INFO)
             self._debug(level, str(sensor))
-
-    def _decode_ctrl_packet(self, version, packet):
-        """Decode a control packet into the list of sensors."""
-        if version != PROP_PACKET_CTRL:
-            return
-
-        for i in range(min(5, len(packet))):
-            input_bit = packet[i]
-            self._debug(PROP_LOGLEVEL_DEBUG, "Byte " + str(i) + ": " + str((input_bit >> 7) & 1) + str((input_bit >> 6) & 1) + str((input_bit >> 5) & 1) + str((input_bit >> 4) & 1) + str((input_bit >> 3) & 1) + str((input_bit >> 2) & 1) + str((input_bit >> 1) & 1) + str(input_bit & 1))
-
-        for sensor in self._sensors[PROP_PACKET_CTRL]:
-            sensor.decode(packet)
-
-        if version == 33:
-            self._debug(PROP_LOGLEVEL_INFO, "ID 33 control values:\n" +
-                        "\n".join(str(sensor) for sensor in self._sensors[PROP_PACKET_CTRL]))
-
-    def get_sensors(self):
-        """Return the list of sensors."""
-        return [sensor for sensors in self._sensors.values() for sensor in sensors]
 
     def __str__(self):
         """Returns an informational text representation of the object."""
@@ -453,17 +371,15 @@ class KWBEasyfire:
 
         return ret
 
-    def _decode_packet(self, mode, version, packet):
-        """Decode only configured message IDs with matching frame types."""
-        if mode == PROP_PACKET_SENSE and version in (PROP_PACKET_SENSE, PROP_PACKET_SENSE_64):
-            self._decode_sense_packet(version, packet)
-        elif mode == PROP_PACKET_CTRL and version == PROP_PACKET_CTRL:
-            self._decode_ctrl_packet(version, packet)
-        if version in self._config.get('decode', []):
-            for line in decode_pairs(version, packet):
-                self._debug(PROP_LOGLEVEL_INFO, line)
+    def _update_sensors(self, message: Message) -> None:
+        """Apply the already parsed values to this message's sensors."""
+        for sensor, value in zip(self._sensors.get(message.message_id, []), message.values):
+            sensor.value = value
+            self._sensors_by_key[sensor.key].value = value
 
     async def _read_async_byte(self):
+        # Ready streams and capture files must still allow cancellation.
+        await asyncio.sleep(0)
         if self._reader is None and self._file is None:
             await self._open_connection()
         if self._mode == PROP_MODE_FILE:
@@ -474,43 +390,33 @@ class KWBEasyfire:
             if not 0 <= value <= 255:
                 raise ValueError("Capture byte must be between 0 and 255")
         else:
-            if self._reconnect_enabled():
-                remaining = self._stale_remaining()
-                data = await asyncio.wait_for(self._reader.read(1), remaining)
-            else:
-                data = await self._reader.read(1)
+            data = await self._reader.read(1)
             if not data:
                 raise EOFError("Input connection closed")
             value = data[0]
         self._record_byte(value)
         return value
 
-    async def listen_forever(self):
-        """Update sensors until EOF or cancellation; allow only one listener.
+    ## Public API
 
-        Cancellation preserves input and partial framing for resumption on the
-        same event loop. Call close() when finished with the connection.
+    def get_sensors(self):
+        """Return one sensor per key, holding its latest received value."""
+        return list(self._sensors_by_key.values())
+
+    async def listen_forever(self) -> None:
+        """Update sensors and log messages until EOF; allow only one listener.
+
+        Await directly or run as a task. Cancellation discards partial frames
+        but retains sensor readings and the connection; call close() to release it.
         """
         while True:
-            try:
-                packet = await self._read_packet()
-            except (EOFError, OSError, asyncio.TimeoutError) as error:
-                if self._reconnect_enabled():
-                    await self._connection_lost(error)
-                    await asyncio.sleep(self._next_retry_delay())
-                    continue
-                await self.close()
-                if isinstance(error, EOFError):
-                    return
-                raise
-            self._decode_packet(*packet)
+            message = await self._read_message()
+            parse_message(self._sensors, message)
+            self._update_sensors(message)
+            self._log_message(message)
 
     async def listen_for(self, seconds=1):
-        """Update sensors for at most seconds, or until EOF; preserve partial input."""
-        if not 0 <= seconds < float('inf'):
-            raise ValueError("seconds must be finite and non-negative")
-        if seconds == 0:
-            return
+        """Update sensors for at most seconds, or until EOF; discard partial frames."""
         listener = asyncio.create_task(self.listen_forever())
         try:
             done, _ = await asyncio.wait({listener}, timeout=seconds)
@@ -532,34 +438,14 @@ def _print_summary(kwb):
             print(sensor)
 
 
-async def _listen_with_summaries(kwb, seconds, summary):
-    """Keep listening while reporting periodically, until EOF or cancellation."""
-    listener = asyncio.create_task(kwb.listen_forever())
-    try:
-        while True:
-            done, _ = await asyncio.wait({listener}, timeout=seconds)
-            if done:
-                listener.result()
-            if summary:
-                _print_summary(kwb)
-            if done:
-                break
-    finally:
-        listener.cancel()
-        try:
-            await listener
-        except asyncio.CancelledError:
-            pass
-
-
 def main():
     """Main method for debug purposes."""
     parser = argparse.ArgumentParser()
     group_execution = parser.add_argument_group('Execution')
     group_execution.add_argument('--wait', type=float, default=5,
-                                 help="Seconds to listen, or summary interval with --forever (default: 5)")
+                                 help="Seconds to listen; ignored with --forever (default: 5)")
     group_execution.add_argument('--forever', action='store_true', default=False,
-                                 help="Listen continuously, printing summaries every --wait seconds")
+                                 help="Listen continuously until input closes or interrupted")
     group_execution.add_argument('--decode', nargs='*', type=int, default=[], metavar='ID',
                                  help="Also decode two-byte values from offsets 3 and 4 for these message IDs (0-255)")
     group_tcp = parser.add_argument_group('TCP')
@@ -593,19 +479,13 @@ def main():
     args = parser.parse_args()
     if not 0 <= args.wait < float('inf'):
         parser.error('--wait must be a finite, non-negative number')
-    if args.forever and args.wait == 0:
-        parser.error('--wait must be positive with --forever')
-    if any(message_id < 0 or message_id > 255 for message_id in args.decode):
-        parser.error('--decode IDs must be between 0 and 255')
-
-    kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, SERIAL_SPEED, args.file,
-                     _config={'decode': args.decode})
+    kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, SERIAL_SPEED, args.file)
     kwb._debug_level = (PROP_LOGLEVEL_NONE if args.log == 'false'
                         else log_levels[args.log_level])
     async def listen():
         try:
             if args.forever:
-                await _listen_with_summaries(kwb, args.wait, args.summary)
+                await kwb.listen_forever()
             else:
                 await kwb.listen_for(seconds=args.wait)
         finally:
@@ -614,9 +494,9 @@ def main():
     try:
         asyncio.run(listen())
     except KeyboardInterrupt:
-        return
-    # Print summary
-    if not args.forever and args.summary:
+        pass
+    # Summarize if requested
+    if args.summary:
         _print_summary(kwb)
 
 
