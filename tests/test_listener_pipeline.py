@@ -13,7 +13,6 @@ from test_temperatures import frame
 class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
     def reader(self):
         reader = KWBEasyfire(PROP_MODE_TCP)
-        reader._debug_level = 0
         stream = asyncio.StreamReader()
         reader._reader = stream
         self.addAsyncCleanup(reader.close)
@@ -21,7 +20,6 @@ class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_listener_parses_updates_then_logs_and_propagates_eof(self):
         reader, stream = self.reader()
-        reader._debug_level = 3
         first_payload = bytes(18) + b'\x00\xe6'
         second_payload = bytes(18) + b'\x05\x14'
         stream.feed_data(frame(80, first_payload) + frame(80, second_payload))
@@ -34,14 +32,14 @@ class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
             log_message(message)
             logged.append(message)
 
-        output = StringIO()
-        with redirect_stdout(output), patch.object(reader, '_log_message', side_effect=log):
+        with self.assertLogs('pykwb.kwb', level='INFO') as output, \
+                patch.object(reader, '_log_message', side_effect=log):
             with self.assertRaises(EOFError):
                 await reader.listen_forever()
         self.assertEqual(len(logged), 2)
         self.assertEqual(logged[0].values, (first_payload, 23))
         self.assertEqual(logged[1].values, (second_payload, None))
-        self.assertIn('Loop 4 Room Temp', output.getvalue())
+        self.assertTrue(any('Loop 4 Room Temp' in record.getMessage() for record in output.records))
         self.assertIsNone(reader._sensors[80][-1].value)
         self.assertFalse(reader._sensors[80][-1].available)
 
@@ -99,7 +97,6 @@ class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reading_does_not_update_or_log_sensor_state(self):
         reader, stream = self.reader()
-        reader._debug_level = 3
         stream.feed_data(frame(80, bytes(20)))
         output = StringIO()
         with redirect_stdout(output):

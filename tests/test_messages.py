@@ -15,7 +15,6 @@ from pykwb.kwb import (
 class MessageSensorTests(unittest.TestCase):
     def setUp(self):
         self.reader = KWBEasyfire(-1)
-        self.reader._debug_level = 0
 
     def sensor(self, name):
         return next(s for s in self.reader.get_sensors() if s.name == name)
@@ -91,7 +90,6 @@ class MessageSensorTests(unittest.TestCase):
                    length='2', scale='0.1', units='C')
         with patch('pykwb.kwb.load_messages', return_value=[row]):
             reader = KWBEasyfire(-1)
-        reader._debug_level = 0
         self.assertEqual(set(reader._sensors), {123})
         message = Message(32, 1, bytes(20), FrameType.SENSE)
         reader._update_sensors(parse_message(reader._sensors, message))
@@ -104,7 +102,6 @@ class MessageSensorTests(unittest.TestCase):
         row = dict(load_messages()[0], message_id='123', type='???')
         with patch('pykwb.kwb.load_messages', return_value=[row]):
             reader = KWBEasyfire(-1)
-        reader._debug_level = 0
         message = Message(123, 1, b'\xff', FrameType.SENSE)
         reader._update_sensors(parse_message(reader._sensors, message))
         self.assertEqual(len(reader.get_sensors()), 1)

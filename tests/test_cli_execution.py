@@ -1,5 +1,6 @@
 """CLI uses async listening and always closes its connection."""
 import unittest
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -12,18 +13,20 @@ from pykwb.kwb import PROP_MODE_FILE, main
 
 class CLIExecutionTests(unittest.TestCase):
     def test_log_levels_apply_before_listening(self):
-        cases = [([], 3), (['--log', 'false'], 0),
-                 (['--log-level', 'trace', '--log', 'false'], 0)]
+        cases = [([], logging.INFO), (['--log', 'false'], logging.CRITICAL + 1),
+                 (['--log-level', 'debug', '--log', 'false'], logging.CRITICAL + 1)]
         cases += [(['--log-level', name], level) for name, level in
-                  [('none', 0), ('error', 1), ('warn', 2), ('warning', 2),
-                   ('info', 3), ('debug', 4), ('trace', 5), ('DEBUG', 4)]]
+                  [('none', logging.CRITICAL + 1), ('error', logging.ERROR),
+                   ('warn', logging.WARNING), ('warning', logging.WARNING),
+                   ('info', logging.INFO), ('debug', logging.DEBUG),
+                   ('DEBUG', logging.DEBUG)]]
         for options, expected in cases:
             with self.subTest(options=options), \
                     patch('sys.argv', ['kwb', '--wait', '0', '--no-summary'] + options), \
                     patch('pykwb.kwb.KWBEasyfire') as factory:
                 reader = factory.return_value
                 reader.close = AsyncMock()
-                reader.listen_for = AsyncMock(side_effect=lambda **kwargs: self.assertEqual(reader._debug_level, expected))
+                reader.listen_for = AsyncMock(side_effect=lambda **kwargs: self.assertEqual(logging.getLogger('pykwb.kwb').handlers[-1].level, expected))
                 main()
                 reader.listen_for.assert_awaited_once_with(seconds=0)
                 reader.close.assert_awaited_once_with()

@@ -1,11 +1,14 @@
-"""Standalone exploratory decoding and the retained CLI argument."""
+"""Exploratory decoding and its CLI output."""
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 from pykwb.kwb import KWBEasyfire, main
-from pykwb.decode import decode_pairs
+from pykwb.messages import decode_pairs
+from test_temperatures import frame
 
 
 class PairDecodeTests(unittest.TestCase):
@@ -45,13 +48,45 @@ class PairDecodeTests(unittest.TestCase):
                 ])
 
     def test_cli_list_and_default(self):
-        for args in ([], ['--decode'], ['--decode', '64', '87'],
-                     ['--decode', '-1', '256']):
+        for args, expected in (([], []), (['--decode'], []),
+                               (['--decode=65'], [65]),
+                               (['--decode', '64', '87'], [64, 87]),
+                               (['--decode', '-1', '256'], [-1, 256])):
             with self.subTest(args=args), \
                     patch('sys.argv', ['kwb', '--no-summary'] + args), \
                     patch('pykwb.kwb.KWBEasyfire', autospec=True) as factory:
                 main()
-            self.assertNotIn('_config', factory.call_args.kwargs)
+            self.assertEqual(factory.call_args.kwargs['_config']['decode'], expected)
+
+    def test_cli_decodes_only_selected_messages_and_respects_log_level(self):
+        payload = bytes.fromhex('00 00 00 02 5f 01')
+        expected = (
+            'ID 65 two-byte decode from offset 3:\n'
+            '  Offset 3: raw=607 temperature=60.7 mbar=0.607 rpm=364.2 ms=6070\n'
+            'ID 65 two-byte decode from offset 4:\n'
+            '  Offset 4: raw=24321 temperature=2432.1 mbar=24.321 rpm=14592.6 ms=243210\n'
+        )
+        with TemporaryDirectory() as directory:
+            capture = Path(directory) / 'capture.txt'
+            capture.write_text(''.join(f'{byte}\n' for byte in
+                                      frame(65, payload) + frame(66, payload)))
+            for args, visible in (([], False), (['--decode=65'], True),
+                                  (['--decode', '65', '67'], True),
+                                  (['--decode=65', '--log-level=debug'], True),
+                                  (['--decode=65', '--log-level=warn'], False),
+                                  (['--decode=65', '--log=false'], False)):
+                with self.subTest(args=args):
+                    output = StringIO()
+                    with patch('sys.argv', ['kwb', '--file', '--name', str(capture),
+                                            '--forever', '--no-summary'] + args), \
+                            redirect_stdout(output), self.assertRaises(EOFError):
+                        main()
+                    text = output.getvalue()
+                    if visible:
+                        self.assertIn(expected, text)
+                    else:
+                        self.assertNotIn('two-byte decode', text)
+                    self.assertNotIn('ID 66 two-byte decode', text)
 
     def test_cli_rejects_noninteger_ids(self):
         for value in ('abc', '32.5'):

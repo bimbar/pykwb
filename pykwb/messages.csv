@@ -159,4 +159,5 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 17,control,ash_clearing_on,Raumaustragung,Ash Clearing On,bit,,3,,6,,,,,measurement,,7
 64,sense,loop_4_out_temp,,Loop 4 Out Temp,int,1,19,2,,0.1,C,,,measurement,temperature,10
 64,sense,loop_3_out_temp,,Loop 3 Out Temp,int,1,21,2,,0.1,C,,,measurement,temperature,10
+65,control,loop_4_pump_on,,Loop 4 Pump On,bit,,1,,5,,,,,measurement,running,
 80,sense,loop_4_room_temp,,Loop 4 Room Temp,int,1,18,2,,0.1,C,,,measurement,temperature,

@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
     def tcp_reader(self):
         reader = KWBEasyfire(-1)
-        reader._debug_level = 0
         reader._mode = PROP_MODE_TCP
         reader._reader = asyncio.StreamReader()
         self.addAsyncCleanup(reader.close)
@@ -33,7 +32,6 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_file_replay_updates_sensors_without_threads(self):
         reader = KWBEasyfire(PROP_MODE_FILE, _file_path=ROOT / 'tests' / 'data' / 'kwb_33_32.txt')
-        reader._debug_level = 0
         self.addAsyncCleanup(reader.close)
         with patch('threading.Thread.start') as start:
             with self.assertRaises(EOFError):
@@ -122,7 +120,6 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         writer = Mock()
         writer.wait_closed = AsyncMock()
         reader = KWBEasyfire(PROP_MODE_SERIAL, _serial_device='/dev/test')
-        reader._debug_level = 0
         with patch('pykwb.kwb.serial_asyncio_fast.open_serial_connection',
                    new_callable=AsyncMock, return_value=(stream, writer)) as connect:
             connect.assert_not_called()
@@ -141,7 +138,6 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(sender.close)
         self.addCleanup(receiver.close)
         reader = KWBEasyfire(PROP_MODE_TCP)
-        reader._debug_level = 0
         self.addAsyncCleanup(reader.close)
         open_connection = asyncio.open_connection
 
@@ -170,7 +166,6 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(os.close, master)
         self.addCleanup(os.close, slave)
         reader = KWBEasyfire(PROP_MODE_SERIAL, _serial_device=os.ttyname(slave))
-        reader._debug_level = 0
         self.addAsyncCleanup(reader.close)
         await reader._open_connection()
         serial_port = reader._writer.transport.serial

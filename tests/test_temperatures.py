@@ -1,12 +1,10 @@
 """Regression coverage for boiler temperature layouts and wire framing."""
 import asyncio
 import unittest
-from contextlib import redirect_stdout
-from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 from pykwb.messages import FrameType, Message, parse_message, _byte_rot_left
-from pykwb.decode import decode_temperature
+from pykwb.messages import decode_temperature
 
 from pykwb.kwb import KWBEasyfire, PROP_MODE_FILE, PROP_MODE_TCP, PROP_SENSOR_TEMPERATURE, PROP_SENSOR_FLAG
 
@@ -30,7 +28,6 @@ def frame(message_id, payload, frame_type=FrameType.SENSE):
 class TemperatureTests(unittest.IsolatedAsyncioTestCase):
     def make_reader(self):
         reader = KWBEasyfire(-1)
-        reader._debug_level = 0
         return reader
 
     async def test_signed_temperatures_and_disconnected_sensor(self):
@@ -96,7 +93,6 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
         for filename, temperature_id, count, expected in cases:
             with self.subTest(filename=filename):
                 reader = KWBEasyfire(PROP_MODE_FILE, _file_path=ROOT / 'tests' / 'data' / filename)
-                reader._debug_level = 0
                 self.addAsyncCleanup(reader.close)
                 counts = {}
                 while True:
@@ -274,15 +270,14 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
             except StopIteration:
                 raise EOFError from None
 
-        output = StringIO()
-        with redirect_stdout(output), \
+        with self.assertLogs('pykwb.kwb', level='INFO') as output, \
                 patch.object(reader, '_read_async_byte', side_effect=read_byte):
             with self.assertRaises(EOFError):
                 await reader.listen_forever()
         self.assertEqual(
-            [line for line in output.getvalue().splitlines() if line],
-            ['Packet ID 87 frame_type=CONTROL counter=1 length=24',
-             'Packet ID 250 frame_type=SENSE counter=1 length=34'])
+            [record.getMessage().strip() for record in output.records],
+            ['Message ID 87 frame_type=CONTROL counter=1 length=24',
+             'Message ID 250 frame_type=SENSE counter=1 length=34'])
         self.assertTrue(all(s.value is None for s in reader.get_sensors()))
 
     async def test_message_ids_decode_with_either_header_form(self):

@@ -30,29 +30,22 @@ import asyncio
 import logging
 import time
 import argparse
+import sys
 from copy import copy
 import serial_asyncio_fast
 
 # Make testing easier for HomeAssistant HACS integration
 if __name__ == "__main__" and not __package__:
     # Direct script execution puts pykwb/, not its parent, on sys.path.
-    import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pykwb.messages import (
-    FrameType, Message, add_to_checksum, load_messages, parse_message,
+    FrameType, Message, add_to_checksum, decode_pairs, load_messages, parse_message,
     _byte_rot_left as _byte_rot_left,
     PROP_SENSOR_TEMPERATURE, PROP_SENSOR_FLAG, PROP_SENSOR_RAW,
     PROP_SENSOR_NUMBER, PROP_SENSOR_PRESSURE, PROP_SENSOR_DURATION, PROP_SENSOR_SPEED,
 )
-
-PROP_LOGLEVEL_TRACE = 5
-PROP_LOGLEVEL_DEBUG = 4
-PROP_LOGLEVEL_INFO = 3
-PROP_LOGLEVEL_WARN = 2
-PROP_LOGLEVEL_ERROR = 1
-PROP_LOGLEVEL_NONE = 0
 
 PROP_MODE_SERIAL = 0
 PROP_MODE_TCP = 1
@@ -177,7 +170,6 @@ class KWBEasyfire:
             'retry_max': 30,
             **self._config.get('connection', {}),
         }
-        self._debug_level = PROP_LOGLEVEL_INFO
         self._reader = None
         self._writer = None
         self._file = None
@@ -192,8 +184,6 @@ class KWBEasyfire:
         self._serial_device = _serial_device
         self._serial_speed = _serial_speed
         self._file_path = _file_path
-        self._logdatalen = 1024
-        self._logdata = []
 
         self._sensors: dict[int, list[KWBEasyfireSensor]] = {}
         self._sensors_by_key: dict[str, KWBEasyfireSensor] = {}
@@ -205,7 +195,7 @@ class KWBEasyfire:
             # Historical reference rows with unknown types have no decoder yet.
             if message['type'] == '???':
                 _LOGGER.debug("Skipping undocumented field for message %d: %s",
-                              message_id, message['name_de'])
+                              message_id, message['name_de'], extra={'terminal': False, 'diagnostic': True})
                 continue
             self._sensors[message_id].append(KWBEasyfireSensor.from_message(message))
 
@@ -214,11 +204,6 @@ class KWBEasyfire:
                 # Keep final state separate from each message's field layout.
                 if sensor.key not in self._sensors_by_key:
                     self._sensors_by_key[sensor.key] = copy(sensor)
-
-    def _debug(self, level, text):
-        """Output a debug log text."""
-        if (level <= self._debug_level):
-            print(text)
 
     async def _open_connection(self):
         """Open streams lazily on the listener's event loop."""
@@ -258,23 +243,15 @@ class KWBEasyfire:
         return self._mode == PROP_MODE_TCP and self._config['connection']['reconnect']
 
     async def _connection_lost(self, error):
-        self._debug(PROP_LOGLEVEL_WARN, "TCP disconnected: %s" % error)
+        _LOGGER.warning("TCP disconnected: %s", error)
         await self.close()
 
     def _next_retry_delay(self):
         settings = self._config['connection']
         delay = min(self._retry_delay, settings['retry_max'])
         self._retry_delay = min(delay * 2, settings['retry_max'])
-        self._debug(PROP_LOGLEVEL_INFO, "TCP reconnect in %g seconds" % delay)
+        _LOGGER.info("TCP reconnect in %g seconds", delay)
         return delay
-
-    def _record_byte(self, value):
-        """Record diagnostics for every input transport."""
-        _LOGGER.debug("READ: %s", value)
-        self._logdata.append(value)
-        if len(self._logdata) > self._logdatalen:
-            self._logdata = self._logdata[-self._logdatalen:]
-        self._debug(PROP_LOGLEVEL_TRACE, "READ: " + str(value))
 
     async def _read_message(self) -> Message:
         """Return a validated Message or raise; retry TCP failures when enabled."""
@@ -323,7 +300,7 @@ class KWBEasyfire:
             checksum = 2
             for value in (length, version, counter):
                 checksum = add_to_checksum(checksum, value)
-                self._debug(PROP_LOGLEVEL_TRACE, "C: " + str(checksum) + " V: " + str(value))
+                _LOGGER.debug("C: %s V: %s", checksum, value)
 
             # Length includes the four header bytes and the checksum, but
             # excludes the additional header marker and payload escape padding.
@@ -333,7 +310,7 @@ class KWBEasyfire:
                 value = (await self._read_async_byte())
                 payload.append(value)
                 checksum = add_to_checksum(checksum, value)
-                self._debug(PROP_LOGLEVEL_TRACE, "C: " + str(checksum) + " V: " + str(value))
+                _LOGGER.debug("C: %s V: %s", checksum, value)
                 if value == 2:
                     padding = (await self._read_async_byte())
                     if padding != 0:
@@ -352,15 +329,18 @@ class KWBEasyfire:
 
     def _log_message(self, message: Message) -> None:
         """Log the completed message and its results using the existing format."""
-        summary = "\n\nPacket ID %d frame_type=%s counter=%d length=%d" % (
+        summary = "\n\nMessage ID %d frame_type=%s counter=%d length=%d" % (
             message.message_id, message.frame_type.name, message.counter, len(message.payload))
-        if self._debug_level >= PROP_LOGLEVEL_DEBUG:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
             summary += " payload=" + message.payload.hex(" ")
-        self._debug(PROP_LOGLEVEL_INFO, summary)
+        _LOGGER.info(summary)
         for sensor in self._sensors.get(message.message_id, []):
-            level = (PROP_LOGLEVEL_DEBUG if sensor.sensor_type == PROP_SENSOR_RAW
-                     else PROP_LOGLEVEL_INFO)
-            self._debug(level, str(sensor))
+            level = (logging.DEBUG if sensor.sensor_type == PROP_SENSOR_RAW
+                     else logging.INFO)
+            _LOGGER.log(level, "%s", sensor)
+        if message.message_id in self._config.get('decode', []):
+            for line in decode_pairs(message.message_id, message.payload):
+                _LOGGER.info("%s", line)
 
     def __str__(self):
         """Returns an informational text representation of the object."""
@@ -394,7 +374,7 @@ class KWBEasyfire:
             if not data:
                 raise EOFError("Input connection closed")
             value = data[0]
-        self._record_byte(value)
+        _LOGGER.debug("READ: %s", value, extra={'diagnostic': True})
         return value
 
     ## Public API
@@ -460,13 +440,12 @@ def main():
     group_file.add_argument('--name', dest='file', help="Specify file name", default='')
     group_terminal = parser.add_argument_group('Terminal')
     log_levels = {
-        'none': PROP_LOGLEVEL_NONE,
-        'error': PROP_LOGLEVEL_ERROR,
-        'warn': PROP_LOGLEVEL_WARN,
-        'warning': PROP_LOGLEVEL_WARN,
-        'info': PROP_LOGLEVEL_INFO,
-        'debug': PROP_LOGLEVEL_DEBUG,
-        'trace': PROP_LOGLEVEL_TRACE,
+        'none': logging.CRITICAL + 1,
+        'error': logging.ERROR,
+        'warn': logging.WARNING,
+        'warning': logging.WARNING,
+        'info': logging.INFO,
+        'debug': logging.DEBUG,
     }
     group_terminal.add_argument('--log-level', type=str.lower, choices=log_levels,
                                 default='info', help="Log verbosity (default: info)")
@@ -477,11 +456,26 @@ def main():
     group_terminal.add_argument('--no-summary', dest='summary', action='store_false',
                                 help="Disable sensor summaries")
     args = parser.parse_args()
+
+    # Validate inputs
     if not 0 <= args.wait < float('inf'):
         parser.error('--wait must be a finite, non-negative number')
-    kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, SERIAL_SPEED, args.file)
-    kwb._debug_level = (PROP_LOGLEVEL_NONE if args.log == 'false'
-                        else log_levels[args.log_level])
+    
+    # Construct KWBEasyfire connector
+    kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, SERIAL_SPEED,
+                     args.file, _config={'decode': args.decode})
+
+    # Configure logging
+    handler = logging.StreamHandler(sys.stdout)
+    level = logging.CRITICAL + 1 if args.log == 'false' else log_levels[args.log_level]
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter('%(message)s'))
+    handler.addFilter(lambda record: getattr(record, 'terminal', True))
+    previous_level, previous_propagate = _LOGGER.level, _LOGGER.propagate
+    _LOGGER.setLevel(level)
+    _LOGGER.propagate = False
+    _LOGGER.addHandler(handler)
+
     async def listen():
         try:
             if args.forever:
@@ -495,6 +489,12 @@ def main():
         asyncio.run(listen())
     except KeyboardInterrupt:
         pass
+    finally:
+        _LOGGER.removeHandler(handler)
+        handler.close()
+        _LOGGER.setLevel(previous_level)
+        _LOGGER.propagate = previous_propagate
+        
     # Summarize if requested
     if args.summary:
         _print_summary(kwb)

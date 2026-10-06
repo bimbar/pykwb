@@ -13,7 +13,6 @@ def reader_with_config(**settings):
     reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {
         'reconnect': True, 'retry_initial': 0.005, 'retry_max': 0.01,
         **settings}})
-    reader._debug_level = 0
     return reader
 
 
