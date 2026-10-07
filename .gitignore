@@ -6,3 +6,4 @@ build/
 dist/
 .ruff_cache/
 .tox/
+worktrees/

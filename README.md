@@ -44,19 +44,65 @@ python3 setup.py install
 pip3 install pykwb
 ```
 
-### Async API
+## Integrating
 
-Requires Python 3.9+. TCP and serial listening are asynchronous; connections open
-when listening starts. Use `await kwb.listen_for(seconds=5)` or
-`await kwb.listen_forever()`, and `await kwb.close()` when finished. See
-[execution and migration](docs/execution.md) and [TCP reconnection](docs/connection.md).
-The CLI always uses async listening; the former `--mode` option is removed.
+Both examples connect to an RS485 terminal server. Replace the host and port with
+your own settings.
 
-### Logging
+### Blocking
 
-Add `--log-level debug` to a run command to change verbosity. Levels: `none`,
-`error`, `warning` (or `warn`), `info` (default), `debug`, `trace`.
-`--log false` disables logging regardless of the level; `--no-summary` disables sensor summaries separately.
+Await `listen_for()` to collect readings before continuing. This waits in the
+calling coroutine while allowing other asyncio tasks to run.
+
+```python
+import asyncio
+
+from pykwb.kwb import KWBEasyfire, PROP_MODE_TCP
+
+
+async def main():
+    kwb = KWBEasyfire(PROP_MODE_TCP, _ip="127.0.0.1", _port=23)
+    try:
+        await kwb.listen_for(seconds=60)
+        for sensor in kwb.get_sensors():
+            print(sensor)
+    finally:
+        await kwb.close()
+
+
+asyncio.run(main())
+```
+
+### Nonblocking
+
+Run `listen_forever()` as a background task while your application does other
+asynchronous work. 
+
+```python
+import asyncio
+
+from pykwb.kwb import KWBEasyfire, PROP_MODE_TCP
+
+async def main():
+    kwb = KWBEasyfire(PROP_MODE_TCP, _ip="127.0.0.1", _port=23)
+    listener = asyncio.create_task(kwb.listen_forever())
+    try:
+        # Replace this sleep with your application's asynchronous work.
+        await asyncio.sleep(60)
+        for sensor in kwb.get_sensors():
+            print(sensor)
+    finally:
+        listener.cancel()
+        try:
+            await listener
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await kwb.close()
+
+
+asyncio.run(main())
+```
 
 ## Development
 
@@ -97,10 +143,10 @@ python3 -m unittest discover -s tests -v
 
 ## Bug Reports
 
-To file a bug report, append `--log-level trace > trace.log` to the command you're using to run pykwb. For example
+To file a bug report, append `--log-level debug > trace.log` to the command you're using to run pykwb. For example
 
 ```sh
-python3 pykwb/kwb.py --tcp --host 127.0.0.1 --port 23 --log-level trace > trace.log
+python3 pykwb/kwb.py --tcp --host 127.0.0.1 --port 23 --log-level debug > trace.log
 ```
 
 Then open an issue on Github and attach trace.log.
