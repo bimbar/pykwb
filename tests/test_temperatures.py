@@ -27,7 +27,8 @@ def frame(message_id, payload, frame_type=FrameType.SENSE):
 
 class TemperatureTests(unittest.IsolatedAsyncioTestCase):
     def make_reader(self):
-        reader = KWBEasyfire(-1)
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader.load_sensors()
         return reader
 
     async def test_signed_temperatures_and_disconnected_sensor(self):
@@ -44,7 +45,7 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
         good = frame(32, payload)
         corrupt = good[:-1] + bytes((good[-1] ^ 1,))
         stream = iter(corrupt + good + frame(33, b'\x01' * 24, frame_type=FrameType.CONTROL))
-        with patch.object(reader, '_read_async_byte', side_effect=lambda: next(stream)):
+        with patch.object(reader._input, 'read_byte', side_effect=lambda: next(stream)):
             self.assertEqual(await reader._read_message(), Message(32, 1, payload, FrameType.SENSE))
             self.assertEqual(await reader._read_message(), Message(33, 1, b'\x01' * 24, FrameType.CONTROL))
 
@@ -74,7 +75,7 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
                         return value
 
                     with patch.object(reader, '_update_sensors', wraps=reader._update_sensors) as update, \
-                            patch.object(reader, '_read_async_byte', side_effect=read):
+                            patch.object(reader._input, 'read_byte', side_effect=read):
                         with self.assertRaises(EOFError):
                             await reader.listen_forever()
                         update.assert_called_once()
@@ -93,6 +94,7 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
         for filename, temperature_id, count, expected in cases:
             with self.subTest(filename=filename):
                 reader = KWBEasyfire(PROP_MODE_FILE, _file_path=ROOT / 'tests' / 'data' / filename)
+                reader.load_sensors()
                 self.addAsyncCleanup(reader.close)
                 counts = {}
                 while True:
@@ -120,7 +122,7 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
                 truncated = bytes((2, 25, 17, 1, 255))
                 payload = b'\x02\x00\x02\x07'
                 stream = iter(truncated + frame(32, payload, frame_type=frame_type))
-                with patch.object(reader, '_read_async_byte', side_effect=lambda: next(stream)):
+                with patch.object(reader._input, 'read_byte', side_effect=lambda: next(stream)):
                     self.assertEqual(await reader._read_message(), Message(32, 1, payload, frame_type))
 
     async def test_empty_and_short_payloads_do_not_crash_temperature_decoder(self):
@@ -133,19 +135,18 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_closed_tcp_connection_raises_eof(self):
         reader = self.make_reader()
-        reader._mode = PROP_MODE_TCP
-        reader._reader = asyncio.StreamReader()
-        reader._reader.feed_eof()
+        reader._input._reader = asyncio.StreamReader()
+        reader._input._reader.feed_eof()
         with self.assertRaises(EOFError):
             await reader.listen_forever()
-        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._input._reader)
 
     async def test_eof_in_partial_message_raises(self):
         reader = self.make_reader()
-        with patch.object(reader, '_read_async_byte', side_effect=[2, 25, 17, 1, EOFError()]):
+        with patch.object(reader._input, 'read_byte', side_effect=[2, 25, 17, 1, EOFError()]):
             with self.assertRaises(EOFError):
                 await reader.listen_forever()
-        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._input._reader)
 
     async def test_captured_short_unknown_frame_keeps_reader_running(self):
         reader = self.make_reader()
@@ -165,7 +166,7 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
             position += 1
             return value
 
-        with patch.object(reader, '_read_async_byte', side_effect=read_byte):
+        with patch.object(reader._input, 'read_byte', side_effect=read_byte):
             with self.assertRaises(EOFError):
                 await reader.listen_forever()
         self.assertEqual(reader._sensors[33][0].value, bytes((255, 255, 255)))
@@ -227,7 +228,7 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
         payload[19:21] = b'\x02\x5f'
         payload[21:23] = b'\xff\xc9'
         wire = iter(frame(64, payload))
-        with patch.object(reader, '_read_async_byte', side_effect=lambda: next(wire)):
+        with patch.object(reader._input, 'read_byte', side_effect=lambda: next(wire)):
             packet = await reader._read_message()
             message = Message(packet.message_id, 1, bytes(packet.payload), FrameType.SENSE)
             reader._update_sensors(parse_message(reader._sensors, message))
@@ -260,7 +261,8 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(loop_3.available)
 
     async def test_unconfigured_packets_get_only_a_summary(self):
-        reader = KWBEasyfire(-1)
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader.load_sensors()
         wire = iter(frame(87, bytes(24), frame_type=FrameType.CONTROL)
                     + frame(250, bytes(34)))
 
@@ -271,7 +273,7 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
                 raise EOFError from None
 
         with self.assertLogs('pykwb.kwb', level='INFO') as output, \
-                patch.object(reader, '_read_async_byte', side_effect=read_byte):
+                patch.object(reader._input, 'read_byte', side_effect=read_byte):
             with self.assertRaises(EOFError):
                 await reader.listen_forever()
         self.assertEqual(
@@ -287,7 +289,7 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
                 reader = self.make_reader()
                 payload = bytes(range(74))
                 source = iter(frame(message_id, payload, frame_type=frame_type))
-                with patch.object(reader, '_read_async_byte', side_effect=lambda: next(source)):
+                with patch.object(reader._input, 'read_byte', side_effect=lambda: next(source)):
                     packet = await reader._read_message()
                 self.assertEqual(packet, Message(message_id, 1, payload, frame_type))
                 message = Message(packet.message_id, 1, bytes(packet.payload), FrameType.SENSE)

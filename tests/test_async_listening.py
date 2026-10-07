@@ -16,11 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
     def tcp_reader(self):
-        reader = KWBEasyfire(-1)
-        reader._mode = PROP_MODE_TCP
-        reader._reader = asyncio.StreamReader()
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader.load_sensors()
+        reader._input._reader = asyncio.StreamReader()
         self.addAsyncCleanup(reader.close)
-        return reader, reader._reader
+        return reader, reader._input._reader
 
     def furnace(self, reader):
         return next(s.value for s in reader.get_sensors() if s.key == 'boiler_temp')
@@ -32,13 +32,14 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_file_replay_updates_sensors_without_threads(self):
         reader = KWBEasyfire(PROP_MODE_FILE, _file_path=ROOT / 'tests' / 'data' / 'kwb_33_32.txt')
+        reader.load_sensors()
         self.addAsyncCleanup(reader.close)
         with patch('threading.Thread.start') as start:
             with self.assertRaises(EOFError):
                 await reader.listen_forever()
         start.assert_not_called()
         self.assertIsNotNone(self.furnace(reader))
-        self.assertIsNone(reader._file)
+        self.assertIsNone(reader._input._file)
 
     async def test_idle_tcp_deadline_keeps_event_loop_responsive(self):
         reader, sender = self.tcp_reader()
@@ -54,7 +55,7 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ticks)
         self.assertGreaterEqual(elapsed, 0.02)
         self.assertLess(elapsed, 1)
-        self.assertIs(reader._reader, sender)
+        self.assertIs(reader._input._reader, sender)
         self.assertIsNone(self.furnace(reader))
 
     async def test_partial_escape_is_discarded_at_listen_for_deadline(self):
@@ -82,7 +83,7 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
-        self.assertIs(reader._reader, sender)
+        self.assertIs(reader._input._reader, sender)
         sender.feed_data(wire[8:])
         await reader.listen_for(0.02)
         self.assertIsNone(self.furnace(reader))
@@ -120,7 +121,8 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         writer = Mock()
         writer.wait_closed = AsyncMock()
         reader = KWBEasyfire(PROP_MODE_SERIAL, _serial_device='/dev/test')
-        with patch('pykwb.kwb.serial_asyncio_fast.open_serial_connection',
+        reader.load_sensors()
+        with patch('pykwb.inputs.serial_asyncio_fast.open_serial_connection',
                    new_callable=AsyncMock, return_value=(stream, writer)) as connect:
             connect.assert_not_called()
             stream.feed_data(self.temperature_frame())
@@ -137,7 +139,8 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         receiver.setblocking(False)
         self.addCleanup(sender.close)
         self.addCleanup(receiver.close)
-        reader = KWBEasyfire(PROP_MODE_TCP)
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader.load_sensors()
         self.addAsyncCleanup(reader.close)
         open_connection = asyncio.open_connection
 
@@ -145,7 +148,7 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
             return await open_connection(sock=receiver)
 
         wire = self.temperature_frame()
-        with patch('pykwb.kwb.asyncio.open_connection', side_effect=connect) as opened:
+        with patch('pykwb.inputs.asyncio.open_connection', side_effect=connect) as opened:
             sender.sendall(wire[:8])
             await reader.listen_for(0.02)
             self.assertIsNone(self.furnace(reader))
@@ -166,9 +169,10 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(os.close, master)
         self.addCleanup(os.close, slave)
         reader = KWBEasyfire(PROP_MODE_SERIAL, _serial_device=os.ttyname(slave))
+        reader.load_sensors()
         self.addAsyncCleanup(reader.close)
-        await reader._open_connection()
-        serial_port = reader._writer.transport.serial
+        await reader._input.open()
+        serial_port = reader._input._writer.transport.serial
         os.write(master, self.temperature_frame())
         await reader.listen_for(0.05)
         self.assertEqual(self.furnace(reader), 74.1)

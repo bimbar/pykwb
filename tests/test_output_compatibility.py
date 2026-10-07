@@ -8,8 +8,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from pykwb.kwb import KWBEasyfire, _print_summary
-from pykwb.messages import FrameType, load_messages
+from pykwb.kwb import PROP_MODE_TCP, KWBEasyfire, _print_summary
+from pykwb.messages import FrameType, load_sensor_definitions
 from test_temperatures import frame
 
 
@@ -17,17 +17,18 @@ FIXTURE = Path(__file__).parent / 'data' / 'listener_output.json'
 
 
 async def capture_output(level, file_level=logging.DEBUG):
-    rows = [row for row in load_messages()
+    rows = [row for row in load_sensor_definitions()
             if (row['message_id'], row['key']) in
             {('32', 'boiler_temp'), ('80', 'loop_4_room_temp')}]
-    with patch('pykwb.kwb.load_messages', return_value=rows):
-        reader = KWBEasyfire(-1)
+    with patch('pykwb.kwb.load_sensor_definitions', return_value=rows):
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader.load_sensors()
     wire = (frame(80, bytes(18) + b'\x00\xe6')
             + frame(87, b'\x00\x00\x00\x02\x5f', FrameType.CONTROL)
             + frame(250, b'', FrameType.CONTROL))
-    reader._reader = asyncio.StreamReader()
-    reader._reader.feed_data(wire)
-    reader._reader.feed_eof()
+    reader._input._reader = asyncio.StreamReader()
+    reader._input._reader.feed_data(wire)
+    reader._input._reader.feed_eof()
 
     terminal, logfile = StringIO(), StringIO()
     logger = logging.getLogger('pykwb.kwb')
@@ -53,8 +54,8 @@ async def capture_output(level, file_level=logging.DEBUG):
             except EOFError:
                 pass
             _print_summary(reader)
-            await reader._connection_lost(ConnectionResetError('connection reset'))
-            reader._next_retry_delay()
+            await reader._input._connection_lost(ConnectionResetError('connection reset'))
+            reader._input._next_retry_delay()
     finally:
         logger.removeHandler(terminal_handler)
         logger.removeHandler(handler)

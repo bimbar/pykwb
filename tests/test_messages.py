@@ -2,26 +2,60 @@
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from pykwb.messages import FrameType, Message, load_messages, parse_message
+from pykwb.messages import FrameType, Message, load_sensor_definitions, parse_message
 
 from pykwb.kwb import (
+    PROP_MODE_TCP,
     KWBEasyfire, KWBEasyfireSensor, _print_summary, PROP_SENSOR_RAW, PROP_SENSOR_TEMPERATURE,
     PROP_SENSOR_PRESSURE, PROP_SENSOR_DURATION, PROP_SENSOR_SPEED, PROP_SENSOR_NUMBER,
 )
 
 
+class LoadSensorDefinitionsTests(unittest.TestCase):
+    def test_none_loads_packaged_definitions(self):
+        rows = load_sensor_definitions()
+        self.assertTrue(rows)
+        self.assertEqual(load_sensor_definitions(None), rows)
+
+    def test_custom_csv_path(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'messages.csv'
+            path.write_text('message_id,name_en\r\n123,"Custom, °C"\r\n',
+                            encoding='utf-8-sig')
+            self.assertEqual(load_sensor_definitions(str(path)),
+                             [{'message_id': '123', 'name_en': 'Custom, °C'}])
+
+    def test_missing_custom_csv_raises(self):
+        with TemporaryDirectory() as directory:
+            with self.assertRaises(FileNotFoundError):
+                load_sensor_definitions(str(Path(directory) / 'missing.csv'))
+
+
 class MessageSensorTests(unittest.TestCase):
+    def test_constructor_defers_sensor_loading(self):
+        with patch('pykwb.kwb.load_sensor_definitions',
+                   wraps=load_sensor_definitions) as load:
+            reader = KWBEasyfire(PROP_MODE_TCP)
+            load.assert_not_called()
+            self.assertEqual(list(reader.get_sensors()), [])
+            reader.load_sensors()
+            load.assert_called_once_with()
+            self.assertTrue(list(reader.get_sensors()))
+
     def setUp(self):
-        self.reader = KWBEasyfire(-1)
+        self.reader = KWBEasyfire(PROP_MODE_TCP)
+        self.reader.load_sensors()
 
     def sensor(self, name):
         return next(s for s in self.reader.get_sensors() if s.name == name)
 
     def test_csv_definitions_and_raw_diagnostics(self):
         sensors = self.reader.get_sensors()
-        rows = load_messages()
+        rows = load_sensor_definitions()
         self.assertEqual(set(self.reader._sensors), {int(r['message_id']) for r in rows})
         self.assertEqual(sum(s.sensor_type != PROP_SENSOR_RAW for s in sensors),
                          len({r['key'] or (r['name_en'] or r['name_de']).lower().replace(' ', '_')
@@ -33,7 +67,7 @@ class MessageSensorTests(unittest.TestCase):
         self.assertEqual(self.sensor('Pressure').unit_of_measurement, 'mbar')
 
     def test_missing_keys_use_english_then_german_name(self):
-        row = dict(load_messages()[0], key='', name_en='Ash Clearing On',
+        row = dict(load_sensor_definitions()[0], key='', name_en='Ash Clearing On',
                    name_de='Asche Austragung')
         self.assertEqual(KWBEasyfireSensor.from_message(row).key, 'ash_clearing_on')
         row['name_en'] = ''
@@ -42,13 +76,14 @@ class MessageSensorTests(unittest.TestCase):
         self.assertEqual(KWBEasyfireSensor.from_message(row).key, 'Explicit_KEY')
 
     def test_shared_key_has_one_final_state_across_message_layouts(self):
-        row = dict(load_messages()[0], message_id='120', key='shared_temp',
+        row = dict(load_sensor_definitions()[0], message_id='120', key='shared_temp',
                    name_en='Shared Temp', type='int', offset='0', length='2',
                    bit='', signed='1', scale='0.1', units='C')
         rows = [row, dict(row, message_id='121', offset='2'),
                 dict(row, message_id='122', key='other_temp')]
-        with patch('pykwb.kwb.load_messages', return_value=rows):
-            reader = KWBEasyfire(-1)
+        with patch('pykwb.kwb.load_sensor_definitions', return_value=rows):
+            reader = KWBEasyfire(PROP_MODE_TCP)
+            reader.load_sensors()
         sensor = next(s for s in reader.get_sensors() if s.key == 'shared_temp')
         self.assertEqual(len([s for s in reader.get_sensors()
                               if s.sensor_type != PROP_SENSOR_RAW]), 2)
@@ -85,11 +120,12 @@ class MessageSensorTests(unittest.TestCase):
         self.assertEqual(output.getvalue().count('Ash Clearing On:'), 1)
 
     def test_csv_alone_selects_message_ids(self):
-        row = dict(load_messages()[-1], message_id='123', key='custom_temp',
+        row = dict(load_sensor_definitions()[-1], message_id='123', key='custom_temp',
                    name_en='Custom Temp', offset='0', type='int', signed='1',
                    length='2', scale='0.1', units='C')
-        with patch('pykwb.kwb.load_messages', return_value=[row]):
-            reader = KWBEasyfire(-1)
+        with patch('pykwb.kwb.load_sensor_definitions', return_value=[row]):
+            reader = KWBEasyfire(PROP_MODE_TCP)
+            reader.load_sensors()
         self.assertEqual(set(reader._sensors), {123})
         message = Message(32, 1, bytes(20), FrameType.SENSE)
         reader._update_sensors(parse_message(reader._sensors, message))
@@ -99,9 +135,10 @@ class MessageSensorTests(unittest.TestCase):
         self.assertEqual([s.value for s in reader.get_sensors()], [b'\x00\xe6', 23])
 
     def test_undocumented_type_retains_raw_message(self):
-        row = dict(load_messages()[0], message_id='123', type='???')
-        with patch('pykwb.kwb.load_messages', return_value=[row]):
-            reader = KWBEasyfire(-1)
+        row = dict(load_sensor_definitions()[0], message_id='123', type='???')
+        with patch('pykwb.kwb.load_sensor_definitions', return_value=[row]):
+            reader = KWBEasyfire(PROP_MODE_TCP)
+            reader.load_sensors()
         message = Message(123, 1, b'\xff', FrameType.SENSE)
         reader._update_sensors(parse_message(reader._sensors, message))
         self.assertEqual(len(reader.get_sensors()), 1)

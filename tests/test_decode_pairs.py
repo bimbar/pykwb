@@ -6,14 +6,15 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from pykwb.kwb import KWBEasyfire, main
+from pykwb.kwb import PROP_MODE_TCP, KWBEasyfire, main
 from pykwb.messages import decode_pairs
 from test_temperatures import frame
 
 
 class PairDecodeTests(unittest.TestCase):
     def test_both_alignments_and_trailing_byte(self):
-        reader = KWBEasyfire(-1)
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader.load_sensors()
         payload = bytes.fromhex('00 00 00 02 5f ff c9 05 14')
         before = [s.value for s in reader.get_sensors()]
         output = StringIO()

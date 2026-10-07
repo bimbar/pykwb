@@ -1,12 +1,41 @@
-"""Load KWB Comfort 3 definitions and parse message payloads."""
-
+# -*- coding: utf-8 -*-
 from __future__ import annotations
+
+"""
+The MIT License (MIT)
+
+Copyright (c) 2017 Markus Peter mpeter at emdev dot de
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Support for KWB Easyfire central heating units.
+"""
+
+"""Load KWB Comfort 3 definitions and parse message payloads."""
 
 import csv
 from dataclasses import dataclass
 from enum import Enum
 from importlib.resources import files
-from typing import TYPE_CHECKING, Union
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Union
 
 if TYPE_CHECKING:
     from pykwb.kwb import KWBEasyfireSensor
@@ -22,6 +51,8 @@ PROP_SENSOR_SPEED = 6
 
 
 SensorValue = Union[bytes, int, float, None]
+SensorDefinition = dict[str, str]
+SensorDefinitions = list[SensorDefinition]
 
 
 class FrameType(Enum):
@@ -56,9 +87,10 @@ def add_to_checksum(checksum: int, value: int) -> int:
     return checksum
 
 
-def load_messages():
-    """Return message definitions as dictionaries of strings (Python 3.9+)."""
-    resource = files("pykwb").joinpath("messages.csv")
+def load_sensor_definitions(file_path: Optional[str] = None) -> SensorDefinitions:
+    """Load string-valued definitions from a CSV path or the packaged CSV."""
+    resource = (Path(file_path) if file_path is not None
+                else files("pykwb").joinpath("messages.csv"))
     with resource.open("r", encoding="utf-8-sig", newline="") as stream:
         return list(csv.DictReader(stream))
 

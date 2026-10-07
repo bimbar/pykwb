@@ -11,10 +11,29 @@ from test_temperatures import frame
 
 
 class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_listening_loads_sensors_once_and_preserves_readings(self):
+        for method in ('listen_forever', 'listen_for'):
+            with self.subTest(method=method):
+                reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+                self.addAsyncCleanup(reader.close)
+                with patch.object(reader, 'load_sensors', wraps=reader.load_sensors) as load, \
+                        patch.object(reader, '_read_message', side_effect=EOFError):
+                    with self.assertRaises(EOFError):
+                        await getattr(reader, method)()
+                    load.assert_called_once_with()
+                    sensor = reader.get_sensors()[0]
+                    sensor.value = b'last reading'
+                    with self.assertRaises(EOFError):
+                        await getattr(reader, method)()
+                    load.assert_called_once_with()
+                    self.assertIs(reader.get_sensors()[0], sensor)
+                    self.assertEqual(sensor.value, b'last reading')
+
     def reader(self):
-        reader = KWBEasyfire(PROP_MODE_TCP)
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader.load_sensors()
         stream = asyncio.StreamReader()
-        reader._reader = stream
+        reader._input._reader = stream
         self.addAsyncCleanup(reader.close)
         return reader, stream
 
@@ -71,14 +90,14 @@ class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
         reader, stream = self.reader()
         stream.feed_data(frame(80, bytes(20)))
         await reader.listen_for(0.02)
-        self.assertIs(reader._reader, stream)
+        self.assertIs(reader._input._reader, stream)
         self.assertEqual(reader._sensors[80][-1].value, 0)
         stream.feed_data(frame(80, bytes(18) + b'\x00\xe6'))
         stream.feed_eof()
         with self.assertRaises(EOFError):
             await reader.listen_forever()
         self.assertEqual(reader._sensors[80][-1].value, 23)
-        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._input._reader)
 
     async def test_listen_for_cancels_and_awaits_listener_on_timeout(self):
         reader, _stream = self.reader()
@@ -113,7 +132,7 @@ class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
                 stream.feed_eof()
                 with self.assertRaises(EOFError):
                     await reader._read_message()
-                self.assertIsNone(reader._reader)
+                self.assertIsNone(reader._input._reader)
 
     async def test_read_message_propagates_transport_failure(self):
         reader, stream = self.reader()
@@ -122,4 +141,4 @@ class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OSError) as raised:
             await reader._read_message()
         self.assertIs(raised.exception, error)
-        self.assertIsNone(reader._reader)
+        self.assertIsNone(reader._input._reader)

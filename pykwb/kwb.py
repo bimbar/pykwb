@@ -32,7 +32,6 @@ import time
 import argparse
 import sys
 from copy import copy
-import serial_asyncio_fast
 
 # Make testing easier for HomeAssistant HACS integration
 if __name__ == "__main__" and not __package__:
@@ -40,8 +39,9 @@ if __name__ == "__main__" and not __package__:
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pykwb.inputs import FileInput, SerialInput, TCPInput
 from pykwb.messages import (
-    FrameType, Message, add_to_checksum, decode_pairs, load_messages, parse_message,
+    FrameType, Message, SensorDefinition, add_to_checksum, decode_pairs, load_sensor_definitions, parse_message,
     _byte_rot_left as _byte_rot_left,
     PROP_SENSOR_TEMPERATURE, PROP_SENSOR_FLAG, PROP_SENSOR_RAW,
     PROP_SENSOR_NUMBER, PROP_SENSOR_PRESSURE, PROP_SENSOR_DURATION, PROP_SENSOR_SPEED,
@@ -75,29 +75,29 @@ class KWBEasyfireSensor:
         self._key = _key or _name.lower().replace(' ', '_')
 
     @classmethod
-    def from_message(cls, message):
-        """Create a sensor from one message definition in messages.csv."""
-        if message['type'] == 'bit':
+    def from_message(cls, sensor_def: SensorDefinition):
+        """Create a sensor from one message definition row in messages.csv."""
+        if sensor_def['type'] == 'bit':
             sensor_type = PROP_SENSOR_FLAG
-        elif message['type'] == 'int':
+        elif sensor_def['type'] == 'int':
             sensor_type = {
                 'C': PROP_SENSOR_TEMPERATURE,
                 'mbar': PROP_SENSOR_PRESSURE,
                 'ms': PROP_SENSOR_DURATION,
                 'sec': PROP_SENSOR_DURATION,
                 'rpm': PROP_SENSOR_SPEED,
-            }.get(message['units'], PROP_SENSOR_NUMBER)
+            }.get(sensor_def['units'], PROP_SENSOR_NUMBER)
         else:
-            raise ValueError("Unsupported sensor type: " + message['type'])
+            raise ValueError("Unsupported sensor type: " + sensor_def['type'])
         return cls(
-            int(message['message_id']), int(message['offset']),
-            message['name_en'] or message['name_de'] or message['key'],
+            int(sensor_def['message_id']), int(sensor_def['offset']),
+            sensor_def['name_en'] or sensor_def['name_de'] or sensor_def['key'],
             sensor_type,
-            _bit=int(message['bit']) if message['bit'] else None,
-            _length=int(message['length'] or 1),
-            _signed=message['signed'] == '1',
-            _scale=float(message['scale'] or 1),
-            _units=message['units'], _key=message['key'],
+            _bit=int(sensor_def['bit']) if sensor_def['bit'] else None,
+            _length=int(sensor_def['length'] or 1),
+            _signed=sensor_def['signed'] == '1',
+            _scale=float(sensor_def['scale'] or 1),
+            _units=sensor_def['units'], _key=sensor_def['key'],
         )
 
     @property
@@ -154,7 +154,6 @@ class KWBEasyfireSensor:
         return self.name + ": I: " + str(self.index) + " T: " + str(self.sensor_type) + "(" + str(self.unit_of_measurement) + ") V: " + str(self.value)
 
 
-# pylint: disable=too-many-instance-attributes
 class KWBEasyfire:
     """Communicate asynchronously with the KWB Easyfire unit."""
 
@@ -164,62 +163,51 @@ class KWBEasyfire:
 
         self._config = dict(_config or {})
         self._config['connection'] = {
-            'reconnect': False,
+            'reconnect': True,
             'connect_timeout': 5,
             'retry_initial': 1,
             'retry_max': 30,
             **self._config.get('connection', {}),
         }
-        self._reader = None
-        self._writer = None
-        self._file = None
-        self._retry_delay = self._config['connection']['retry_initial']
-        for key in ('connect_timeout', 'retry_initial', 'retry_max'):
-            if not 0 < self._config['connection'][key] < float('inf'):
-                raise ValueError("connection.%s must be finite and positive" % key)
 
-        self._mode = _mode
-        self._ip = _ip
-        self._port = _port
-        self._serial_device = _serial_device
-        self._serial_speed = _serial_speed
-        self._file_path = _file_path
+        # Create data input
+        settings = self._config['connection']
+        if _mode == PROP_MODE_TCP:
+            self._input = TCPInput(_ip, _port, settings, _LOGGER)
+        elif _mode == PROP_MODE_SERIAL:
+            self._input = SerialInput(_serial_device, _serial_speed,
+                                      settings['connect_timeout'], _LOGGER)
+        elif _mode == PROP_MODE_FILE:
+            self._input = FileInput(_file_path, _LOGGER)
+        else:
+            raise ValueError("Unsupported input mode")
 
         self._sensors: dict[int, list[KWBEasyfireSensor]] = {}
         self._sensors_by_key: dict[str, KWBEasyfireSensor] = {}
-        for message in load_messages():
-            message_id = int(message['message_id'])
+
+    def load_sensors(self) -> None:
+        """Load sensors from the packaged CSV before starting listening."""
+        self._sensors = {}
+        self._sensors_by_key = {}
+        for sensor_def in load_sensor_definitions():
+            message_id = int(sensor_def['message_id'])
             if message_id not in self._sensors:
                 self._sensors[message_id] = [KWBEasyfireSensor(
                     message_id, 0, "RAW %d" % message_id, PROP_SENSOR_RAW)]
             # Historical reference rows with unknown types have no decoder yet.
-            if message['type'] == '???':
+            if sensor_def['type'] == '???':
                 _LOGGER.debug("Skipping undocumented field for message %d: %s",
-                              message_id, message['name_de'], extra={'terminal': False, 'diagnostic': True})
+                              message_id, sensor_def['name_de'], extra={'terminal': False, 'diagnostic': True})
                 continue
-            self._sensors[message_id].append(KWBEasyfireSensor.from_message(message))
+            self._sensors[message_id].append(KWBEasyfireSensor.from_message(sensor_def))
 
+        # A sensor key can appear in multiple messages with different field
+        # layouts. Keep those definitions in _sensors and create one independent
+        # public sensor per key
         for sensors in self._sensors.values():
             for sensor in sensors:
-                # Keep final state separate from each message's field layout.
                 if sensor.key not in self._sensors_by_key:
                     self._sensors_by_key[sensor.key] = copy(sensor)
-
-    async def _open_connection(self):
-        """Open streams lazily on the listener's event loop."""
-        if self._mode == PROP_MODE_FILE:
-            self._file = open(self._file_path, "r")
-            return
-        if self._mode == PROP_MODE_TCP:
-            connect = asyncio.open_connection(self._ip, self._port)
-        elif self._mode == PROP_MODE_SERIAL:
-            connect = serial_asyncio_fast.open_serial_connection(
-                url=self._serial_device, baudrate=self._serial_speed)
-        else:
-            raise ValueError("Unsupported input mode")
-        self._reader, self._writer = await asyncio.wait_for(
-            connect, self._config['connection']['connect_timeout'])
-        self._retry_delay = self._config['connection']['retry_initial']
 
     async def close(self):
         """Release input resources after stopping/awaiting the listener task.
@@ -227,44 +215,17 @@ class KWBEasyfire:
         Cancelling listening discards the in-progress frame but keeps the
         connection open. Explicit close releases the connection as well.
         """
-        writer, self._writer = self._writer, None
-        self._reader = None
-        if self._file is not None:
-            self._file.close()
-            self._file = None
-        if writer is not None:
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except OSError:
-                pass
-
-    def _reconnect_enabled(self):
-        return self._mode == PROP_MODE_TCP and self._config['connection']['reconnect']
-
-    async def _connection_lost(self, error):
-        _LOGGER.warning("TCP disconnected: %s", error)
-        await self.close()
-
-    def _next_retry_delay(self):
-        settings = self._config['connection']
-        delay = min(self._retry_delay, settings['retry_max'])
-        self._retry_delay = min(delay * 2, settings['retry_max'])
-        _LOGGER.info("TCP reconnect in %g seconds", delay)
-        return delay
+        await self._input.close()
 
     async def _read_message(self) -> Message:
-        """Return a validated Message or raise; retry TCP failures when enabled."""
+        """Return a validated Message or raise; discard frames before recovery."""
         while True:
             try:
                 return await self._collect_frame()
             except (EOFError, OSError, asyncio.TimeoutError) as error:
-                if self._reconnect_enabled():
-                    await self._connection_lost(error)
-                    await asyncio.sleep(self._next_retry_delay())
-                    continue
-                await self.close()
-                raise
+                # Attempt to recover connection before reraising error
+                if not await self._input.recover(error):
+                    raise
 
     async def _collect_frame(self) -> Message:
         """Collect and validate a frame before parsing it.
@@ -276,9 +237,9 @@ class KWBEasyfire:
         pending_length = None
         while True:
             if pending_length is None:
-                if (await self._read_async_byte()) != 2:
+                if (await self._input.read_byte()) != 2:
                     continue
-                length = (await self._read_async_byte())
+                length = (await self._input.read_byte())
             else:
                 length = pending_length
                 pending_length = None
@@ -291,12 +252,12 @@ class KWBEasyfire:
             frame_type = FrameType.CONTROL
             while length == 2:
                 frame_type = FrameType.SENSE
-                length = (await self._read_async_byte())
+                length = (await self._input.read_byte())
             if length < 5:
                 continue
 
-            version = (await self._read_async_byte())
-            counter = (await self._read_async_byte())
+            version = (await self._input.read_byte())
+            counter = (await self._input.read_byte())
             checksum = 2
             for value in (length, version, counter):
                 checksum = add_to_checksum(checksum, value)
@@ -307,12 +268,12 @@ class KWBEasyfire:
             payload = bytearray()
             valid = True
             for _ in range(length - 5):
-                value = (await self._read_async_byte())
+                value = (await self._input.read_byte())
                 payload.append(value)
                 checksum = add_to_checksum(checksum, value)
                 _LOGGER.debug("C: %s V: %s", checksum, value)
                 if value == 2:
-                    padding = (await self._read_async_byte())
+                    padding = (await self._input.read_byte())
                     if padding != 0:
                         # An unescaped 2 starts a new frame. Reuse its next
                         # byte as the length (or additional header marker), rather
@@ -322,7 +283,7 @@ class KWBEasyfire:
                         break
             if not valid:
                 continue
-            if (await self._read_async_byte()) != checksum:
+            if (await self._input.read_byte()) != checksum:
                 continue
 
             return Message(version, counter, bytes(payload), frame_type)
@@ -357,26 +318,6 @@ class KWBEasyfire:
             sensor.value = value
             self._sensors_by_key[sensor.key].value = value
 
-    async def _read_async_byte(self):
-        # Ready streams and capture files must still allow cancellation.
-        await asyncio.sleep(0)
-        if self._reader is None and self._file is None:
-            await self._open_connection()
-        if self._mode == PROP_MODE_FILE:
-            line = self._file.readline()
-            if not line:
-                raise EOFError("EOF")
-            value = int(line)
-            if not 0 <= value <= 255:
-                raise ValueError("Capture byte must be between 0 and 255")
-        else:
-            data = await self._reader.read(1)
-            if not data:
-                raise EOFError("Input connection closed")
-            value = data[0]
-        _LOGGER.debug("READ: %s", value, extra={'diagnostic': True})
-        return value
-
     ## Public API
 
     def get_sensors(self):
@@ -389,6 +330,10 @@ class KWBEasyfire:
         Await directly or run as a task. Cancellation discards partial frames
         but retains sensor readings and the connection; call close() to release it.
         """
+
+        # Ensure sensors have been loaded
+        if not self._sensors: self.load_sensors()
+
         while True:
             message = await self._read_message()
             parse_message(self._sensors, message)
@@ -464,6 +409,7 @@ def main():
     # Construct KWBEasyfire connector
     kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, SERIAL_SPEED,
                      args.file, _config={'decode': args.decode})
+    kwb.load_sensors()
 
     # Configure logging
     handler = logging.StreamHandler(sys.stdout)
