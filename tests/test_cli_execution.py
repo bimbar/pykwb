@@ -12,6 +12,15 @@ from pykwb.kwb import PROP_MODE_FILE, main
 
 
 class CLIExecutionTests(unittest.TestCase):
+    def test_include_unkeyed_flag(self):
+        for options, expected in (([], False), (['--include-unkeyed'], True)):
+            with self.subTest(options=options), \
+                    patch('sys.argv', ['kwb', '--wait', '0', '--no-summary'] + options), \
+                    patch('pykwb.kwb.KWBEasyfire', autospec=True) as factory:
+                main()
+                self.assertIs(factory.call_args.kwargs['_config']['include_unkeyed'],
+                              expected)
+
     def test_log_levels_apply_before_listening(self):
         cases = [([], logging.INFO), (['--log', 'false'], logging.CRITICAL + 1),
                  (['--log-level', 'debug', '--log', 'false'], logging.CRITICAL + 1)]

@@ -30,7 +30,8 @@ class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(sensor.value, b'last reading')
 
     def reader(self):
-        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={
+            'connection': {'reconnect': False}, 'include_unkeyed': True})
         reader.load_sensors()
         stream = asyncio.StreamReader()
         reader._input._reader = stream
@@ -58,7 +59,7 @@ class ListenerPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(logged), 2)
         self.assertEqual(logged[0].values, (first_payload, 23))
         self.assertEqual(logged[1].values, (second_payload, None))
-        self.assertTrue(any('Loop 4 Room Temp' in record.getMessage() for record in output.records))
+        self.assertTrue(any('Zone 4 Room Temp' in record.getMessage() for record in output.records))
         self.assertIsNone(reader._sensors[80][-1].value)
         self.assertFalse(reader._sensors[80][-1].available)
 

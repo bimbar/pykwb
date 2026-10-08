@@ -17,9 +17,13 @@ FIXTURE = Path(__file__).parent / 'data' / 'listener_output.json'
 
 
 async def capture_output(level, file_level=logging.DEBUG):
-    rows = [row for row in load_sensor_definitions()
-            if (row['message_id'], row['key']) in
-            {('32', 'boiler_temp'), ('80', 'loop_4_room_temp')}]
+    rows = [row for row in load_sensor_definitions(include_unkeyed=True)
+            if (row['message_id'], row['name_en']) in
+            {('32', 'Boiler Temp'), ('80', 'Zone 4 Room Temp')}]
+    # Keep the historical display name used by the output-format fixture.
+    for row in rows:
+        if row['message_id'] == '80':
+            row['name_en'] = 'Loop 4 Room Temp'
     with patch('pykwb.kwb.load_sensor_definitions', return_value=rows):
         reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
         reader.load_sensors()

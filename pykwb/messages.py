@@ -87,12 +87,14 @@ def add_to_checksum(checksum: int, value: int) -> int:
     return checksum
 
 
-def load_sensor_definitions(file_path: Optional[str] = None) -> SensorDefinitions:
-    """Load string-valued definitions from a CSV path or the packaged CSV."""
+def load_sensor_definitions(file_path: Optional[str] = None, *,
+                            include_unkeyed: bool = False) -> SensorDefinitions:
+    """Load CSV definitions, skipping rows without a key unless opted in."""
     resource = (Path(file_path) if file_path is not None
                 else files("pykwb").joinpath("messages.csv"))
     with resource.open("r", encoding="utf-8-sig", newline="") as stream:
-        return list(csv.DictReader(stream))
+        return [row for row in csv.DictReader(stream)
+                if include_unkeyed or row.get('key')]
 
 
 def parse_message(sensors: dict[int, list[KWBEasyfireSensor]], message: Message) -> Message:

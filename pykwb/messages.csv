@@ -11,30 +11,30 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 32,sense,,Sicherheitsthermostat,Safety Thermostat,bit,,5,,0,,,,binary_sensor,,,10
 32,sense,,RFK Taste,RFK Button,bit,,5,,1,,,,binary_sensor,,,10
 32,sense,,TÜB Stoker,TÜB Ignition,bit,,5,,2,,,,binary_sensor,,,10
-32,sense,loop_1_out_temp,HK1 Vorlauf Temperatur,Loop 1 Out Temp,int,1,6,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
-32,sense,,Kessel Rücklauf Temperatur,Boiler Return Temp,int,1,8,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
+32,sense,zone_1_out_temp,HK1 Vorlauf Temperatur,Zone 1 Out Temp,int,1,6,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
+32,sense,boiler_return_temp,Kessel Rücklauf Temperatur,Boiler Return Temp,int,1,8,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
 32,sense,tank_0_temp,Boiler 0 Temperatur,Tank 0 Temp,int,1,10,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
 32,sense,boiler_temp,Kessel Temperatur,Boiler Temp,int,1,12,2,,0.1,C,,sensor,measurement,temperature,"1, 9, 10"
 32,sense,buffer_2_temp_c,Puffer 2 (unten) Temperatur,Buffer 2 Temp,int,1,14,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
 32,sense,buffer_1_temp_c,Puffer 1 (oben) Temperatur,Buffer 1 Temp,int,1,16,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
-32,sense,loop_1_outdoor_temp_c,Außen Temperatur HK1,Loop 1 Outdoor Temp,int,1,18,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
+32,sense,zone_1_outdoor_temp_c,Außen Temperatur HK1,Zone 1 Outdoor Temp,int,1,18,2,,0.1,C,,sensor,measurement,temperature,"9, 10"
 32,sense,exhaust_gas_temp,Rauchgastemperatur,Exhaust Gas Temp,int,1,20,2,,0.1,C,,sensor,measurement,temperature,"1, 9, 10"
 32,sense,cpu_temp,Proztemperatur,CPU Temp,int,1,22,2,,0.1,C,,sensor,measurement,temperature,"1, 10"
-32,sense,,HK1 Fernverstellung Temperatur,Loop 1 Remote Adjustment Temp,int,1,24,2,,0.1,C,,sensor,measurement,temperature,10
-32,sense,,HK2 Fernverstellung Temperatur,Loop 2 Remote Adjustment Temp,int,1,26,2,,0.1,C,,sensor,measurement,temperature,10
-32,sense,,,Loop 2 Out Temp,int,1,28,2,,0.1,C,,sensor,measurement,temperature,10
-32,sense,stoker_channel,Stoker Channel,Stoker Channel,int,1,30,2,,0.1,C,,sensor,measurement,temperature,
+32,sense,,HK1 Fernverstellung Temperatur,Zone 1 Remote Adjustment Temp,int,1,24,2,,0.1,C,,sensor,measurement,temperature,10
+32,sense,,HK2 Fernverstellung Temperatur,Zone 2 Remote Adjustment Temp,int,1,26,2,,0.1,C,,sensor,measurement,temperature,10
+32,sense,,,Zone 2 Out Temp,int,1,28,2,,0.1,C,,sensor,measurement,temperature,10
+32,sense,stoker_channel_temp,Stokerkanal,Stoker Channel Temp,int,1,30,2,,0.1,C,,sensor,measurement,temperature,
 32,sense,photodiode,photo,Photodiode,int,1,32,2,,,,,sensor,measurement,,1
 32,sense,pressure_mbar,Unterdruck,Pressure,int,,34,2,,0.001,mbar,,sensor,measurement,pressure,9
 32,sense,,Drehzahl Saugzug,Suction Speed,int,0,69,2,,0.6,rpm,,sensor,measurement,speed,"1, 10"
 32,sense,fan_speed_rpm,Drehzahl Luefter,Fan Speed,int,0,71,2,,0.6,rpm,,sensor,measurement,speed,"1, 10"
 33,control,,Kessel Hauptrelais,Heater Power On,bit,,1,,2,,,,binary_sensor,measurement,power,"9, 10"
-33,control,loop_1_pump_on,HK1 Pumpe,Loop 1 Pump On,bit,,1,,5,,,,binary_sensor,measurement,running,"9, 10"
-33,control,loop_2_pump_on,HK2 Pumpe,Loop 2 Pump On,bit,,1,,6,,,,binary_sensor,measurement,running,"9, 10"
-33,control,,HK1 Mischer AN,Loop 1 Mixer Open,bit,,1,,7,,,,binary_sensor,measurement,opening,"9, 10"
-33,control,,HK1 Mischer ZU,Loop 1 Mixer Closed,bit,,2,,0,,,,binary_sensor,measurement,,"9, 10"
-33,control,,HK2 Mischer AN,Loop 2 Mixer Open,bit,,2,,1,,,,binary_sensor,measurement,opening,"9, 10"
-33,control,,HK2 Mischer ZU,Loop 2 Mixer Closed,bit,,2,,2,,,,binary_sensor,measurement,,"9, 10"
+33,control,zone_1_pump_on,HK1 Pumpe,Zone 1 Pump On,bit,,1,,5,,,,binary_sensor,measurement,running,"9, 10"
+33,control,zone_2_pump_on,HK2 Pumpe,Zone 2 Pump On,bit,,1,,6,,,,binary_sensor,measurement,running,"9, 10"
+33,control,,HK1 Mischer AN,Zone 1 Mixer Open,bit,,1,,7,,,,binary_sensor,measurement,opening,"9, 10"
+33,control,,HK1 Mischer ZU,Zone 1 Mixer Closed,bit,,2,,0,,,,binary_sensor,measurement,,"9, 10"
+33,control,,HK2 Mischer AN,Zone 2 Mixer Open,bit,,2,,1,,,,binary_sensor,measurement,opening,"9, 10"
+33,control,,HK2 Mischer ZU,Zone 2 Mixer Closed,bit,,2,,2,,,,binary_sensor,measurement,,"9, 10"
 33,control,,,Return Mixer Open,bit,,2,,3,,,,binary_sensor,measurement,opening,10
 33,control,,,Return Mixer Closed,bit,,2,,4,,,,binary_sensor,measurement,,10
 33,control,tank_0_pump_on,Boiler Pumpe,Tank 0 Pump On,bit,,2,,5,,,,binary_sensor,measurement,running,"9, 10"
@@ -54,21 +54,16 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 33,control,main_drive_run_time,Einschubzeit Hauptantrieb,Feed Screw On Time,int,0,12,2,,10,ms,,sensor,measurement,duration,10
 33,control,heater_output,Kesselleistung,Heater Output,int,0,13,1,,1,%,,sensor,measurement,power_factor,3
 33,control,ignition_on,Zuendung,Ignition On,bit,,16,,2,,,,binary_sensor,measurement,running,1
-16,sense,loop_1_out_temp,T_Vorlauf_HK1,Loop 1 Out Flow Temp,int,1,5,2,,0.1,C,,,measurement,temperature,2
-16,sense,boiler_return_temp,T_Ruecklauf_Kessel,Boiler Return Flow Temp,int,1,7,2,,0.1,C,,,measurement,temperature,2
-16,sense,,T_Ruecklauf_Kessel,Boiler Return Flow Temp,int,,7,2,,0.1,C,,,measurement,temperature,8
-16,sense,tank_temp,T_Boiler,Tank Temp,int,1,9,2,,0.1,C,,,measurement,temperature,2
-16,sense,,T_Boiler,Tank Temp,int,,9,2,,0.1,C,,,measurement,temperature,8
+16,sense,zone_1_out_temp,HK1 Vorlauf Temperatur,Zone 1 Out Temp,int,1,5,2,,0.1,C,,,measurement,temperature,2
+16,sense,boiler_return_temp,Kessel Rücklauf Temperatur,Boiler Return Temp,int,1,7,2,,0.1,C,,,measurement,temperature,2
+16,sense,tank_0_temp,Boiler 0 Temperatur,Tank 0 Temp,int,1,9,2,,0.1,C,,,measurement,temperature,2
 16,sense,boiler_temp,T_Kessel,Boiler Temp,int,1,11,2,,0.1,C,,,measurement,temperature,2
-16,sense,boiler_temp,T_Kessel,Boiler Temp,int,,11,2,,0.1,C,,,measurement,temperature,8
-16,sense,,T_Puffer_Unten,,int,,13,2,,0.1,C,,,measurement,temperature,8
-16,sense,,T_Puffer_Oben,,int,,15,2,,0.1,C,,,measurement,temperature,8
-16,sense,outdoor_temp,T_Outside,Outdoor Temp,int,1,17,2,,0.1,C,,,measurement,temperature,2
-16,sense,,T_Aussen,Outdoor Temp,int,,17,2,,0.1,C,,,measurement,temperature,8
-16,sense,,T_Rauchgas,Exhaust Gas Temp,int,,19,2,,0.1,C,,,measurement,temperature,8
-16,sense,exhaust_gas_temp,T_Rauchgas,Exhaust Gas Temp,int,1,19,2,,0.1,C,,,measurement,temperature,2
+16,sense,buffer_2_temp,Puffer 2 (unten) Temperatur,Buffer 2 Bottom Temp,int,,13,2,,0.1,C,,,measurement,temperature,8
+16,sense,buffer_1_temp,Puffer 1 (oben) Temperatur,Buffer 1 Top Temp,int,,15,2,,0.1,C,,,measurement,temperature,8
+16,sense,outdoor_temp,Außen Temperatur,Outdoor Temp,int,1,17,2,,0.1,C,,,measurement,temperature,2
+16,sense,exhaust_gas_temp,Rauchgas Temperatur,Exhaust Gas Temp,int,1,19,2,,0.1,C,,,measurement,temperature,2
 16,sense,,T_Control,,int,1,21,2,,0.1,C,,,measurement,temperature,2
-16,sense,ignition_tube_temp,T_Stokerkanal,,int,1,29,2,,0.1,C,,,measurement,temperature,2
+16,sense,stoker_channel_temp,Stokerkanal,Stoker Channel Temp,int,1,29,2,,0.1,C,,,measurement,temperature,2
 16,sense,,Klixon Raumaustragung,Pellet Suction Alarm,bit,,9,,1,,,,,measurement,,4
 16,sense,,Füllstandssensor,,bit,,9,,2,,,,,measurement,,4
 16,sense,,Klixon Stoker,,bit,,9,,3,,,,,measurement,,4
@@ -80,13 +75,13 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 16,sense,,RFK Taste,,bit,,10,,1,,,,,measurement,,4
 16,sense,,TÜB Stoker,,bit,,10,,2,,,,,measurement,,4
 16,sense,,HK1 Vorlauf Temperatur,,int,1,11,2,,0.1,C,,,measurement,temperature,4
-16,sense,,Rücklauf Temperatur,Boiler Return Flow Temp,int,1,13,2,,0.1,C,,,measurement,temperature,4
-16,sense,,Boiler 0 Temperatur,Tank 0 Temp,int,1,15,2,,0.1,C,,,measurement,temperature,4
+16,sense,,Rücklauf Temperatur,Boiler Return Temp,int,1,13,2,,0.1,C,,,measurement,temperature,4
+16,sense,tank_0_temp,Boiler 0 Temperatur,Tank 0 Temp,int,1,15,2,,0.1,C,,,measurement,temperature,4
 16,sense,boiler_temp,KesselTemperatur,Boiler Temp,int,1,17,2,,0.1,C,,,measurement,temperature,4
-16,sense,,Puffer 2 (unten) Temperatur,Buffer 2 Bottom Temp,int,1,19,2,,0.1,C,,,measurement,temperature,4
-16,sense,,Puffer 1 (oben) Temperatur,Buffer 1 Top Temp,int,1,21,2,,0.1,C,,,measurement,temperature,4
-16,sense,,Außen Temperatur,Outdoor Temp,int,1,23,2,,0.1,C,,,measurement,temperature,4
-16,sense,,Rauchgas Temperatur,Exhaust Gas Temp,int,1,25,2,,0.1,C,,,measurement,temperature,4
+16,sense,buffer_2_temp,Puffer 2 (unten) Temperatur,Buffer 2 Bottom Temp,int,1,19,2,,0.1,C,,,measurement,temperature,4
+16,sense,buffer_1_temp,Puffer 1 (oben) Temperatur,Buffer 1 Top Temp,int,1,21,2,,0.1,C,,,measurement,temperature,4
+16,sense,outdoor_temp,Außen Temperatur,Outdoor Temp,int,1,23,2,,0.1,C,,,measurement,temperature,4
+16,sense,exhaust_gas_temp,Rauchgas Temperatur,Exhaust Gas Temp,int,1,25,2,,0.1,C,,,measurement,temperature,4
 16,sense,,Kesselsteuergerät Temperatur,,int,1,27,2,,0.1,C,,,measurement,temperature,4
 16,sense,,HK1 Fernverstellung Temperatur,,int,1,29,2,,0.1,C,,,measurement,temperature,4
 16,sense,,HK2 Fernverstellung Temperatur,,int,1,31,2,,0.1,C,,,measurement,temperature,4
@@ -95,10 +90,10 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 17,control,alarm_2,Alarm2,Alarm 2,bit,,1,2,,,,,,measurement,,2
 17,control,alarm_1,Alarm1,Alarm 1,bit,,1,3,,,,,,measurement,,2
 17,control,tank_pump_on,Boiler_Pumpe,Tank Pump On,bit,,1,5,,,,,,measurement,,2
-17,control,loop_1_pump_on,HK1_Pumpe,Loop 1 Pump On,bit,,1,7,,,,,,measurement,,2
+17,control,zone_1_pump_on,HK1_Pumpe,Zone 1 Pump On,bit,,1,7,,,,,,measurement,,2
 17,control,ash_clearing_on,Ascheaustragung,Ash Clearing On,bit,,2,0,,,,,,measurement,,2
 17,control,cleaning_on,Reinigung,Cleaning On,bit,,2,1,,,,,,measurement,,2
-17,control,loop_1_mixer_on,HK1_Mischer,Loop 1 Mixer,bit,,2,6,,,,,,measurement,,2
+17,control,zone_1_mixer_on,HK1_Mischer,Zone 1 Mixer,bit,,2,6,,,,,,measurement,,2
 17,control,,Hauptrelais,,bit,,3,4,,,,,,measurement,,2
 17,control,ash_clearing_on,Raumaustragung,Ash Clearing On,bit,,3,6,,,,,,measurement,,2
 17,control,ash_can_ok,Aschebehaelter,Ash Can OK,bit,,3,6,,,,,,measurement,,2
@@ -109,16 +104,16 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 17,control,alarm_1,Alarm 1,Alarm 1,bit,,6,,3,,,,,measurement,,4
 17,control,,Leistung,,bit,,6,,4,,,,,measurement,,4
 17,control,tank_0_pump_on,Boiler 0 Pumpe,Tank 0 Pump On,bit,,6,,5,,,,,measurement,,4
-17,control,loop_2_pump_on,HK2 Pumpe,Loop 2 Pump On,bit,,6,,6,,,,,measurement,,4
-17,control,loop_1_pump_on,HK1 Pumpe,Loop 1 Pump On,bit,,6,,7,,,,,measurement,,4
+17,control,zone_2_pump_on,HK2 Pumpe,Zone 2 Pump On,bit,,6,,6,,,,,measurement,,4
+17,control,zone_1_pump_on,HK1 Pumpe,Zone 1 Pump On,bit,,6,,7,,,,,measurement,,4
 17,control,ash_clearing_on,Ascheaustragung,Ash Clearing On,bit,,7,,0,,,,,measurement,,4
 17,control,cleaning_on,Cleaning On,,bit,,7,,1,,,,,measurement,,4
 17,control,,Rücklaufmischer ein,Boiler Return Mixer Open,bit,,7,,2,,,,,measurement,,4
 17,control,,Rücklaufmischer zu,Boiler Return Mixer Closed,bit,,7,,3,,,,,measurement,,4
-17,control,,HK2 Mischer ein,Loop 2 Mixer Open,bit,,7,,4,,,,,measurement,,4
-17,control,,HK2 Mischer zu,Loop 2 Mixer Closed,bit,,7,,5,,,,,measurement,,4
-17,control,,HK1 Mischer ein,Loop 1 Mixer Open,bit,,7,,6,,,,,measurement,,4
-17,control,,HK1 Mischer zu,Loop 1 Mixer Closed,bit,,7,,7,,,,,measurement,,4
+17,control,,HK2 Mischer ein,Zone 2 Mixer Open,bit,,7,,4,,,,,measurement,,4
+17,control,,HK2 Mischer zu,Zone 2 Mixer Closed,bit,,7,,5,,,,,measurement,,4
+17,control,,HK1 Mischer ein,Zone 1 Mixer Open,bit,,7,,6,,,,,measurement,,4
+17,control,,HK1 Mischer zu,Zone 1 Mixer Closed,bit,,7,,7,,,,,measurement,,4
 17,control,,Hauptreials,,bit,,8,,4,,,,,measurement,,4
 17,control,ash_clearing_on,Raumaustragung,Ash Clearing On,bit,,8,,5,,,,,measurement,,4
 17,control,,Rücklaufpumpe,,???,???,9,1,,0.3921568627,%,,,measurement,,4
@@ -129,8 +124,8 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 17,control,,Stokerantrieb ein,,???,???,14,1,,0 => 3 ???,,,,measurement,,4
 17,control,,Kessel_AN,Boiler On,bit,,15,0,,,,,,measurement,,2
 17,control,,Stokerantrieb ein,,???,???,15,1,,0 => 232 ???,,,,measurement,,4
-48,sense,,T_Ruecklauf_Kessel,Boiler Return Flow Temp,int,1,7,2,,0.1,C,,,measurement,temperature,6
-48,sense,,T_Boiler,,int,1,9,2,,0.1,C,,,measurement,temperature,6
+48,sense,,T_Ruecklauf_Kessel,Boiler Return Temp,int,1,7,2,,0.1,C,,,measurement,temperature,6
+48,sense,tank_0_temp,Boiler 0 Temperatur,Tank 0 Temp,int,1,9,2,,0.1,C,,,measurement,temperature,6
 48,sense,boiler_temp,T_Kessel,Boiler Temp,int,1,11,2,,0.1,C,,,measurement,temperature,6
 48,sense,,T_Buffer_Down,,int,1,13,2,,0.1,C,,,measurement,temperature,6
 48,sense,,T_Puffer_Oben,,int,1,15,2,,0.1,C,,,measurement,temperature,6
@@ -147,17 +142,18 @@ message_id,message_type,key,name_de,name_en,type,signed,offset,length,bit,scale,
 49,control,,HK0_Mischer_UP,,bit,,3,,5,,,,,measurement,,6
 49,control,,HK0_Mischer_ZU,,bit,,3,,6,,,,,measurement,,6
 17,control,,Pumpe_Boiler,Tank Pump On,bit,,1,,5,,,,,measurement,,7
-17,control,,Pumpe_HK2,Loop 2 Pump On,bit,,1,,6,,,,,measurement,,7
-17,control,,Pumpe_HK1,Loop 1 Pump On,bit,,1,,7,,,,,measurement,,7
+17,control,zone_2_pump_on,Pumpe_HK2,Zone 2 Pump On,bit,,1,,6,,,,,measurement,,7
+17,control,zone_1_pump_on,Pumpe_HK1,Zone 1 Pump On,bit,,1,,7,,,,,measurement,,7
 17,control,,Ascheaustragung,Ash Removal On,bit,,2,,0,,,,,measurement,,7
 17,control,,Cleaning On,,bit,,2,,1,,,,,measurement,,7
-17,control,,HK2_Mischer,Loop 2 Mixer,bit,,2,,4,,,,,measurement,,7
-17,control,,HK1_Mischer,Loop 1 Mixer,bit,,2,,6,,,,,measurement,,7
+17,control,zone_2_mixer,HK2_Mischer,Zone 2 Mixer,bit,,2,,4,,,,,measurement,,7
+17,control,zone_1_mixer,HK1_Mischer,Zone 1 Mixer,bit,,2,,6,,,,,measurement,,7
 17,control,,Hauptrelais,,bit,,3,,4,,,,,measurement,,7
 17,control,,Pumpe_Puffer,Buffer Pump On,bit,,4,,1,,,,,measurement,,7
 17,control,,Kessel_AN,Boiler On,bit,,15,,0,,,,,measurement,,7
 17,control,ash_clearing_on,Raumaustragung,Ash Clearing On,bit,,3,,6,,,,,measurement,,7
-64,sense,loop_4_out_temp,,Loop 4 Out Temp,int,1,19,2,,0.1,C,,,measurement,temperature,10
-64,sense,loop_3_out_temp,,Loop 3 Out Temp,int,1,21,2,,0.1,C,,,measurement,temperature,10
-65,control,loop_4_pump_on,,Loop 4 Pump On,bit,,1,,5,,,,,measurement,running,
-80,sense,loop_4_room_temp,,Loop 4 Room Temp,int,1,18,2,,0.1,C,,,measurement,temperature,
+64,sense,zone_4_out_temp,,Zone 4 Out Temp,int,1,19,2,,0.1,C,,,measurement,temperature,10
+64,sense,zone_3_out_temp,,Zone 3 Out Temp,int,1,21,2,,0.1,C,,,measurement,temperature,10
+65,control,zone_3_pump_on,,Zone 3 Pump On,bit,,1,,2,,,,,measurement,running,
+65,control,zone_4_pump_on,,Zone 4 Pump On,bit,,1,,5,,,,,measurement,running,
+80,sense,zone_4_room_temp,,Zone 4 Room Temp,int,1,18,2,,0.1,C,,,measurement,temperature,

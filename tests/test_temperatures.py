@@ -27,7 +27,8 @@ def frame(message_id, payload, frame_type=FrameType.SENSE):
 
 class TemperatureTests(unittest.IsolatedAsyncioTestCase):
     def make_reader(self):
-        reader = KWBEasyfire(PROP_MODE_TCP, _config={'connection': {'reconnect': False}})
+        reader = KWBEasyfire(PROP_MODE_TCP, _config={
+            'connection': {'reconnect': False}, 'include_unkeyed': True})
         reader.load_sensors()
         return reader
 
@@ -93,7 +94,8 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
         )
         for filename, temperature_id, count, expected in cases:
             with self.subTest(filename=filename):
-                reader = KWBEasyfire(PROP_MODE_FILE, _file_path=ROOT / 'tests' / 'data' / filename)
+                reader = KWBEasyfire(PROP_MODE_FILE, _file_path=ROOT / 'tests' / 'data' / filename,
+                                     _config={'include_unkeyed': True})
                 reader.load_sensors()
                 self.addAsyncCleanup(reader.close)
                 counts = {}
@@ -233,8 +235,8 @@ class TemperatureTests(unittest.IsolatedAsyncioTestCase):
             message = Message(packet.message_id, 1, bytes(packet.payload), FrameType.SENSE)
             reader._update_sensors(parse_message(reader._sensors, message))
         sensors = {s.key: s for s in reader.get_sensors() if s.key}
-        loop_4 = sensors['loop_4_out_temp']
-        loop_3 = sensors['loop_3_out_temp']
+        loop_4 = sensors['zone_4_out_temp']
+        loop_3 = sensors['zone_3_out_temp']
         self.assertEqual((loop_4.value, loop_3.value), (60.7, -5.5))
         self.assertEqual((loop_4.unit_of_measurement, loop_3.unit_of_measurement),
                          ('°C', '°C'))

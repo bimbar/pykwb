@@ -112,8 +112,8 @@ class AsyncListeningTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(EOFError):
             await reader.listen_forever()
         values = {s.key: s.value for s in reader.get_sensors() if s.key}
-        self.assertEqual(values['loop_4_out_temp'], 60.7)
-        self.assertEqual(values['loop_3_out_temp'], -5.5)
+        self.assertEqual(values['zone_4_out_temp'], 60.7)
+        self.assertEqual(values['zone_3_out_temp'], -5.5)
         self.assertEqual(self.furnace(reader), 74.1)
 
     async def test_serial_stream_decodes_and_closes(self):

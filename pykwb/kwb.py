@@ -189,7 +189,8 @@ class KWBEasyfire:
         """Load sensors from the packaged CSV before starting listening."""
         self._sensors = {}
         self._sensors_by_key = {}
-        for sensor_def in load_sensor_definitions():
+        for sensor_def in load_sensor_definitions(
+                include_unkeyed=self._config.get('include_unkeyed', False)):
             message_id = int(sensor_def['message_id'])
             if message_id not in self._sensors:
                 self._sensors[message_id] = [KWBEasyfireSensor(
@@ -371,6 +372,8 @@ def main():
                                  help="Seconds to listen; ignored with --forever (default: 5)")
     group_execution.add_argument('--forever', action='store_true', default=False,
                                  help="Listen continuously until input closes or interrupted")
+    group_execution.add_argument('--include-unkeyed', action='store_true', default=False,
+                                 help="Also load CSV rows without keys, generating keys from names")
     group_execution.add_argument('--decode', nargs='*', type=int, default=[], metavar='ID',
                                  help="Also decode two-byte values from offsets 3 and 4 for these message IDs (0-255)")
     group_tcp = parser.add_argument_group('TCP')
@@ -408,7 +411,8 @@ def main():
     
     # Construct KWBEasyfire connector
     kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, SERIAL_SPEED,
-                     args.file, _config={'decode': args.decode})
+                     args.file, _config={'decode': args.decode,
+                                         'include_unkeyed': args.include_unkeyed})
     kwb.load_sensors()
 
     # Configure logging

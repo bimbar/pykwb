@@ -26,8 +26,19 @@ class LoadSensorDefinitionsTests(unittest.TestCase):
             path = Path(directory) / 'messages.csv'
             path.write_text('message_id,name_en\r\n123,"Custom, °C"\r\n',
                             encoding='utf-8-sig')
-            self.assertEqual(load_sensor_definitions(str(path)),
+            self.assertEqual(load_sensor_definitions(str(path)), [])
+            self.assertEqual(load_sensor_definitions(str(path), include_unkeyed=True),
                              [{'message_id': '123', 'name_en': 'Custom, °C'}])
+
+    def test_unkeyed_rows_require_opt_in(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'messages.csv'
+            path.write_text('message_id,key,name_en\n1,explicit,Named\n2,,Unnamed\n')
+            rows = load_sensor_definitions(str(path), include_unkeyed=True)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(load_sensor_definitions(str(path)), rows[:1])
+            self.assertEqual(load_sensor_definitions(str(path), include_unkeyed=False),
+                             rows[:1])
 
     def test_missing_custom_csv_raises(self):
         with TemporaryDirectory() as directory:
@@ -43,11 +54,11 @@ class MessageSensorTests(unittest.TestCase):
             load.assert_not_called()
             self.assertEqual(list(reader.get_sensors()), [])
             reader.load_sensors()
-            load.assert_called_once_with()
+            load.assert_called_once_with(include_unkeyed=False)
             self.assertTrue(list(reader.get_sensors()))
 
     def setUp(self):
-        self.reader = KWBEasyfire(PROP_MODE_TCP)
+        self.reader = KWBEasyfire(PROP_MODE_TCP, _config={'include_unkeyed': True})
         self.reader.load_sensors()
 
     def sensor(self, name):
@@ -55,7 +66,7 @@ class MessageSensorTests(unittest.TestCase):
 
     def test_csv_definitions_and_raw_diagnostics(self):
         sensors = self.reader.get_sensors()
-        rows = load_sensor_definitions()
+        rows = load_sensor_definitions(include_unkeyed=True)
         self.assertEqual(set(self.reader._sensors), {int(r['message_id']) for r in rows})
         self.assertEqual(sum(s.sensor_type != PROP_SENSOR_RAW for s in sensors),
                          len({r['key'] or (r['name_en'] or r['name_de']).lower().replace(' ', '_')
@@ -65,6 +76,17 @@ class MessageSensorTests(unittest.TestCase):
         self.assertEqual(self.sensor('Boiler Temp').key, 'boiler_temp')
         self.assertEqual(self.sensor('Boiler Temp').unit_of_measurement, '°C')
         self.assertEqual(self.sensor('Pressure').unit_of_measurement, 'mbar')
+
+    def test_default_excludes_unkeyed_definitions(self):
+        reader = KWBEasyfire(PROP_MODE_TCP)
+        reader.load_sensors()
+        rows = load_sensor_definitions()
+        self.assertTrue(all(row['key'] for row in rows))
+        self.assertEqual({s.key for s in reader.get_sensors()
+                          if s.sensor_type != PROP_SENSOR_RAW},
+                         {row['key'] for row in rows if row['type'] != '???'})
+        self.assertNotIn('suction_speed', {s.key for s in reader.get_sensors()})
+        self.assertIn('suction_speed', {s.key for s in self.reader.get_sensors()})
 
     def test_missing_keys_use_english_then_german_name(self):
         row = dict(load_sensor_definitions()[0], key='', name_en='Ash Clearing On',
@@ -148,7 +170,7 @@ class MessageSensorTests(unittest.TestCase):
         payload = bytes(18) + b'\x00\xe6'
         message = Message(80, 1, bytes(payload), FrameType.SENSE)
         self.reader._update_sensors(parse_message(self.reader._sensors, message))
-        sensor = self.sensor('Loop 4 Room Temp')
+        sensor = self.sensor('Zone 4 Room Temp')
         self.assertEqual(sensor.value, 23)
         self.assertTrue(sensor.available)
         message = Message(80, 1, bytes(payload[:-1]), FrameType.SENSE)
