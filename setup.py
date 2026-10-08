@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
     name = 'pykwb',
-    version = '0.1.0',
+    version = '0.1.1',
     packages = ['pykwb'],
     package_data = {'pykwb': ['messages.csv']},
     python_requires = '>=3.9',
