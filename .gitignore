@@ -1,0 +1,9 @@
+*.pyc
+__pycache__
+pykwb.egg-info
+*.log
+build/
+dist/
+.ruff_cache/
+.tox/
+worktrees/

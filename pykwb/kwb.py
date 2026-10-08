@@ -26,71 +26,94 @@ SOFTWARE.
 Support for KWB Easyfire central heating units.
 """
 
-import struct
+import asyncio
 import logging
-import socket
 import time
-import threading
 import argparse
-import serial
+import sys
+from copy import copy
 
+# Make testing easier for HomeAssistant HACS integration
+if __name__ == "__main__" and not __package__:
+    # Direct script execution puts pykwb/, not its parent, on sys.path.
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-PROP_LOGLEVEL_TRACE = 5
-PROP_LOGLEVEL_DEBUG = 4
-PROP_LOGLEVEL_INFO = 3
-PROP_LOGLEVEL_WARN = 2
-PROP_LOGLEVEL_ERROR = 1
-PROP_LOGLEVEL_NONE = 0
+from pykwb.inputs import FileInput, SerialInput, TCPInput
+from pykwb.messages import (
+    FrameType, Message, SensorDefinition, add_to_checksum, decode_pairs, load_sensor_definitions, parse_message,
+    _byte_rot_left as _byte_rot_left,
+    PROP_SENSOR_TEMPERATURE, PROP_SENSOR_FLAG, PROP_SENSOR_RAW,
+    PROP_SENSOR_NUMBER, PROP_SENSOR_PRESSURE, PROP_SENSOR_DURATION, PROP_SENSOR_SPEED,
+)
 
 PROP_MODE_SERIAL = 0
 PROP_MODE_TCP = 1
 PROP_MODE_FILE = 2
 
-STATUS_WAITING = 0
-STATUS_PRE_1 = 1
-STATUS_SENSE_PRE_2 = 2
-STATUS_SENSE_PRE_3 = 3
-STATUS_SENSE_PRE_LENGTH = 6
-STATUS_SENSE_DATA = 8
-STATUS_SENSE_CHECKSUM = 9
-STATUS_CTRL_PRE_2 = 10
-STATUS_CTRL_PRE_3 = 11
-STATUS_CTRL_DATA = 12
-STATUS_CTRL_CHECKSUM = 19
-STATUS_PACKET_DONE = 255
-
-PROP_PACKET_SENSE = 0
-PROP_PACKET_CTRL = 1
-
-PROP_SENSOR_TEMPERATURE = 0
-PROP_SENSOR_FLAG = 1
-PROP_SENSOR_RAW = 2
-
-TCP_IP = "127.0.0.1"
-TCP_PORT = 23
-
-SERIAL_INTERFACE = "/dev/ttyUSB0"
 SERIAL_SPEED = 19200
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class KWBEasyfireSensor:
     """This Class represents as single sensor."""
 
-    def __init__(self, _packet, _index, _name, _sensor_type):
+    def __init__(self, _message_id, _index, _name, _sensor_type, _bit=None,
+                 _length=2, _signed=True, _scale=0.1, _units="", _key=""):
 
-        self._packet = _packet
+        self._message_id = _message_id
         self._index = _index
+        self._bit = _bit
         self._name = _name
         self._sensor_type = _sensor_type
         self._value = None
         self._available = False
+        self._length = _length
+        self._signed = _signed
+        self._scale = _scale
+        self._units = _units
+        self._key = _key or _name.lower().replace(' ', '_')
+
+    @classmethod
+    def from_message(cls, sensor_def: SensorDefinition):
+        """Create a sensor from one message definition row in messages.csv."""
+        if sensor_def['type'] == 'bit':
+            sensor_type = PROP_SENSOR_FLAG
+        elif sensor_def['type'] == 'int':
+            sensor_type = {
+                'C': PROP_SENSOR_TEMPERATURE,
+                'mbar': PROP_SENSOR_PRESSURE,
+                'ms': PROP_SENSOR_DURATION,
+                'sec': PROP_SENSOR_DURATION,
+                'rpm': PROP_SENSOR_SPEED,
+            }.get(sensor_def['units'], PROP_SENSOR_NUMBER)
+        else:
+            raise ValueError("Unsupported sensor type: " + sensor_def['type'])
+        return cls(
+            int(sensor_def['message_id']), int(sensor_def['offset']),
+            sensor_def['name_en'] or sensor_def['name_de'] or sensor_def['key'],
+            sensor_type,
+            _bit=int(sensor_def['bit']) if sensor_def['bit'] else None,
+            _length=int(sensor_def['length'] or 1),
+            _signed=sensor_def['signed'] == '1',
+            _scale=float(sensor_def['scale'] or 1),
+            _units=sensor_def['units'], _key=sensor_def['key'],
+        )
+
+    @property
+    def key(self):
+        """Return the sensor identity, using its name when no CSV key is set."""
+        return self._key
 
     @property
     def index(self):
-        """Returns the offset from the start of the packet."""
+        """Return the unescaped payload byte offset, or None if unmapped."""
         return self._index
+
+    @property
+    def bit(self):
+        """Return the bit position within the payload byte for flags."""
+        return self._bit
 
     @property
     def name(self):
@@ -99,16 +122,16 @@ class KWBEasyfireSensor:
 
     @property
     def sensor_type(self):
-        """Returns the type of the sensor. It can be CTRL or SENSE."""
+        """Return the sensor's measurement or data type."""
         return self._sensor_type
 
     @property
     def unit_of_measurement(self):
-        """Returns the unit of measurement of the sensor. It can be °C or empty."""
+        """Return the CSV unit, displaying Celsius as °C."""
         if (self._sensor_type == PROP_SENSOR_TEMPERATURE):
             return "°C"
         else:
-            return ""
+            return self._units
 
     @property
     def value(self):
@@ -118,7 +141,7 @@ class KWBEasyfireSensor:
     @value.setter
     def value(self, _value):
         """Sets the value of the sensor. Unit is unit_of_measurement."""
-        self._available = True
+        self._available = _value is not None
         self._value = _value
 
     @property
@@ -131,323 +154,228 @@ class KWBEasyfireSensor:
         return self.name + ": I: " + str(self.index) + " T: " + str(self.sensor_type) + "(" + str(self.unit_of_measurement) + ") V: " + str(self.value)
 
 
-# pylint: disable=too-many-instance-attributes
 class KWBEasyfire:
-    """Communicats with the KWB Easyfire unit."""
+    """Communicate asynchronously with the KWB Easyfire unit."""
 
-    def __init__(self, _mode, _ip="", _port=0, _serial_device="", _serial_speed=19200, _file_path=""):
+    def __init__(self, _mode, _ip="", _port=0, _serial_device="", _serial_speed=19200,
+                 _file_path="", _config=None):
         """Initialize the Object."""
 
-        self._debug_level = PROP_LOGLEVEL_DEBUG
-        self._run_thread = True
+        self._config = dict(_config or {})
+        self._config['connection'] = {
+            'reconnect': True,
+            'connect_timeout': 5,
+            'retry_initial': 1,
+            'retry_max': 30,
+            **self._config.get('connection', {}),
+        }
 
-        self._mode = _mode
-        self._ip = _ip
-        self._port = _port
-        self._serial_device = _serial_device
-        self._serial_speed = _serial_speed
-        self._file_path = _file_path
-        self._logdatalen = 1024
-        self._logdata = []
+        # Create data input
+        settings = self._config['connection']
+        if _mode == PROP_MODE_TCP:
+            self._input = TCPInput(_ip, _port, settings, _LOGGER)
+        elif _mode == PROP_MODE_SERIAL:
+            self._input = SerialInput(_serial_device, _serial_speed,
+                                      settings['connect_timeout'], _LOGGER)
+        elif _mode == PROP_MODE_FILE:
+            self._input = FileInput(_file_path, _LOGGER)
+        else:
+            raise ValueError("Unsupported input mode")
 
-        self._sense_sensor = []
+        self._sensors: dict[int, list[KWBEasyfireSensor]] = {}
+        self._sensors_by_key: dict[str, KWBEasyfireSensor] = {}
 
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "RAW SENSE", PROP_SENSOR_RAW))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 0, "Heating Circuit 1 Supply", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 1, "Return", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 2, "Boiler 0", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 3, "Furnace", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 4, "Buffer Tank 2", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 5, "Buffer Tank 1", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 6, "Outside", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 7, "Exhaust", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 8, "Furnace Control", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 9, "Heating Circuit 1 Remote", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 10, "Heating Circuit 2 Remote", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 11, "Heating Circuit 2 Supply", PROP_SENSOR_TEMPERATURE))
-        self._sense_sensor.append(KWBEasyfireSensor(PROP_PACKET_SENSE, 12, "Stoker Channel", PROP_SENSOR_TEMPERATURE))
+    def load_sensors(self) -> None:
+        """Load sensors from the packaged CSV before starting listening."""
+        self._sensors = {}
+        self._sensors_by_key = {}
+        for sensor_def in load_sensor_definitions(
+                include_unkeyed=self._config.get('include_unkeyed', False)):
+            message_id = int(sensor_def['message_id'])
+            if message_id not in self._sensors:
+                self._sensors[message_id] = [KWBEasyfireSensor(
+                    message_id, 0, "RAW %d" % message_id, PROP_SENSOR_RAW)]
+            # Historical reference rows with unknown types have no decoder yet.
+            if sensor_def['type'] == '???':
+                _LOGGER.debug("Skipping undocumented field for message %d: %s",
+                              message_id, sensor_def['name_de'], extra={'terminal': False, 'diagnostic': True})
+                continue
+            self._sensors[message_id].append(KWBEasyfireSensor.from_message(sensor_def))
 
-        self._ctrl_sensor = []
+        # A sensor key can appear in multiple messages with different field
+        # layouts. Keep those definitions in _sensors and create one independent
+        # public sensor per key
+        for sensors in self._sensors.values():
+            for sensor in sensors:
+                if sensor.key not in self._sensors_by_key:
+                    self._sensors_by_key[sensor.key] = copy(sensor)
 
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 0, "RAW CTRL", PROP_SENSOR_RAW))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 0, "Ignition", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 1, "Fire Damper", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 2, "Alarm 2", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 3, "Alarm 1", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 4, "Power", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 5, "Boiler 0 Pump", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 6, "Heating Circuit 2 Pump", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 7, "Heating Circuit 1 Pump", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 8, "Ash Discharge", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 9, "Cleaning", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 10, "Return Mixer On", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 11, "Return Mixer Closed", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 12, "Heating Circuit 2 Mixer On", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 13, "Heating Circuit 2 Mixer Closed", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 14, "Heating Circuit 1 Mixer On", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 15, "Heating Circuit 1 Mixer Closed", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 20, "Main Relais", PROP_SENSOR_FLAG))
-        self._ctrl_sensor.append(KWBEasyfireSensor(PROP_PACKET_CTRL, 21, "Room Discharge", PROP_SENSOR_FLAG))
+    async def close(self):
+        """Release input resources after stopping/awaiting the listener task.
 
-        self._thread = threading.Thread(target=self.run, daemon=True)
+        Cancelling listening discards the in-progress frame but keeps the
+        connection open. Explicit close releases the connection as well.
+        """
+        await self._input.close()
 
-        self._open_connection()
+    async def _read_message(self) -> Message:
+        """Return a validated Message or raise; discard frames before recovery."""
+        while True:
+            try:
+                return await self._collect_frame()
+            except (EOFError, OSError, asyncio.TimeoutError) as error:
+                # Attempt to recover connection before reraising error
+                if not await self._input.recover(error):
+                    raise
 
-    def _debug(self, level, text):
-        """Output a debug log text."""
-        if (level <= self._debug_level):
-            print(text)
+    async def _collect_frame(self) -> Message:
+        """Collect and validate a frame before parsing it.
 
-    def __del__(self):
-        """Destruct the object."""
-        self._debug(PROP_LOGLEVEL_DEBUG, self._logdata)
-        self._close_connection()
-
-    def _open_connection(self):
-        """Open a connection to the easyfire unit."""
-        if (self._mode == PROP_MODE_SERIAL):
-            self._serial = serial.Serial(self._serial_device, self._serial_speed)
-        elif (self._mode == PROP_MODE_TCP):
-            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._socket.connect((self._ip, self._port))
-        elif (self._mode == PROP_MODE_FILE):
-            self._file = open(self._file_path, "r")
-
-    def _close_connection(self):
-        """Close the connection to the easyfire unit."""
-        if (self._mode == PROP_MODE_SERIAL):
-            self._serial.close()
-        elif (self._mode == PROP_MODE_TCP):
-            self._socket.close()
-        elif (self._mode == PROP_MODE_FILE):
-            self._file.close()
-
-    @staticmethod
-    def _byte_rot_left(byte, distance):
-        """Rotate a byte left by distance bits."""
-        return ((byte << distance) | (byte >> (8 - distance))) % 256
-
-    def _add_to_checksum(self, checksum, value):
-        """Add a byte to the checksum."""
-        checksum = self._byte_rot_left(checksum, 1)
-        checksum = checksum + value
-        if (checksum > 255):
-            checksum = checksum - 255
-        self._debug(PROP_LOGLEVEL_TRACE, "C: " + str(checksum) + " V: " + str(value))
-        return checksum
-
-    def _read_byte(self):
-        """Read a byte from input."""
-
-        to_return = ""
-        if (self._mode == PROP_MODE_SERIAL):
-            to_return = self._serial.read(1)
-        elif (self._mode == PROP_MODE_TCP):
-            to_return = self._socket.recv(1)
-        elif (self._mode == PROP_MODE_FILE):
-            read = self._file.readline()
-            if (read == ''):
-                raise Exception("EOF")
-            to_return = struct.pack("B", int(read))
-
-        _LOGGER.debug("READ: " + str(ord(to_return)))
-        self._logdata.append(ord(to_return))
-        if (len(self._logdata) > self._logdatalen):
-            self._logdata = self._logdata[len(self._logdata) - self._logdatalen:]
-
-        self._debug(PROP_LOGLEVEL_TRACE, "READ: " + str(ord(to_return)))
-
-        return to_return
-
-    def _read_ord_byte(self):
-        """Read a byte as number from the input."""
-        return ord(self._read_byte())
-
-    @staticmethod
-    def _sense_packet_to_data(packet):
-        """Remove the escape pad bytes from a sense packet (\2\0 -> \2)."""
-        data = bytearray(0)
-        last = 0
-        i = 1
-        while (i < len(packet)):
-            if not (last == 2 and packet[i] == 0):
-                data.append(packet[i])
-            last = packet[i]
-            i += 1
-
-        return data
-
-    @staticmethod
-    def _decode_temp(byte_1, byte_2):
-        """Decode a signed short temperature as two bytes to a single number."""
-        temp = (byte_1 << 8) + byte_2
-        if (temp > 32767):
-            temp = temp - 65536
-        temp = temp / 10
-        return temp
-
-    # pylint: disable=too-many-branches, too-many-statements
-    def _read_packet(self):
-        """Read a packet from the input."""
-
-        status = STATUS_WAITING
-        mode = 0
-        checksum = 0
-        checksum_calculated = 0
-        length = 0
-        version = 0
-        i = 0
-        cnt = 0
-        packet = bytearray(0)
-
-        while (status != STATUS_PACKET_DONE):
-
-            read = self._read_ord_byte()
-            if (status != STATUS_CTRL_CHECKSUM and status != STATUS_SENSE_CHECKSUM):
-                checksum_calculated = self._add_to_checksum(checksum_calculated, read)
-            self._debug(PROP_LOGLEVEL_TRACE, "R: " + str(read))
-            self._debug(PROP_LOGLEVEL_TRACE, "S: " + str(status))
-
-            if (status == STATUS_WAITING):
-                if (read == 2):
-                    status = STATUS_PRE_1
-                    checksum_calculated = read
-                else:
-                    status = STATUS_WAITING
-            elif (status == STATUS_PRE_1):
-                checksum = 0
-                if (read == 2):
-                    status = STATUS_SENSE_PRE_2
-                    checksum_calculated = read
-                elif (read == 0):
-                    status = STATUS_WAITING
-                else:
-                    status = STATUS_CTRL_PRE_2
-            elif (status == STATUS_SENSE_PRE_2):
-                length = read
-                status = STATUS_SENSE_PRE_LENGTH
-            elif (status == STATUS_SENSE_PRE_LENGTH):
-                version = read
-                status = STATUS_SENSE_PRE_3
-            elif (status == STATUS_SENSE_PRE_3):
-                cnt = read
-                i = 0
-                status = STATUS_SENSE_DATA
-            elif (status == STATUS_SENSE_DATA):
-                packet.append(read)
-                i = i + 1
-                if (i == length):
-                    status = STATUS_SENSE_CHECKSUM
-            elif (status == STATUS_SENSE_CHECKSUM):
-                checksum = read
-                mode = PROP_PACKET_SENSE
-                status = STATUS_PACKET_DONE
-            elif (status == STATUS_CTRL_PRE_2):
-                version = read
-                status = STATUS_CTRL_PRE_3
-            elif (status == STATUS_CTRL_PRE_3):
-                cnt = read
-                i = 0
-                length = 16
-                status = STATUS_CTRL_DATA
-            elif (status == STATUS_CTRL_DATA):
-                packet.append(read)
-                i = i + 1
-                if (i == length):
-                    status = STATUS_CTRL_CHECKSUM
-            elif (status == STATUS_CTRL_CHECKSUM):
-                checksum = read
-                mode = PROP_PACKET_CTRL
-                status = STATUS_PACKET_DONE
+        Partial input is local to this call and discarded when it is cancelled
+        or the connection fails. Invalid frames are skipped until a valid one
+        arrives. Return unescaped payload and header metadata.
+        """
+        pending_length = None
+        while True:
+            if pending_length is None:
+                if (await self._input.read_byte()) != 2:
+                    continue
+                length = (await self._input.read_byte())
             else:
-                status = STATUS_WAITING
+                length = pending_length
+                pending_length = None
 
-        self._debug(PROP_LOGLEVEL_DEBUG, "MODE: " + str(mode) + " Version: " + str(version) + " Checksum: " + str(checksum) + " / " + str(checksum_calculated) + " Count: " + str(cnt) + " Length: " + str(len(packet)))
-        self._debug(PROP_LOGLEVEL_TRACE, "Packet: " + str(packet))
+            if length == 0:
+                continue
+            # The first 0x02 was already consumed, including on resynchronization.
+            # A single marker is CONTROL; an additional marker identifies SENSE.
+            # This metadata does not select a decoder. Tolerate repeated markers.
+            frame_type = FrameType.CONTROL
+            while length == 2:
+                frame_type = FrameType.SENSE
+                length = (await self._input.read_byte())
+            if length < 5:
+                continue
 
-        return (mode, version, packet)
+            version = (await self._input.read_byte())
+            counter = (await self._input.read_byte())
+            checksum = 2
+            for value in (length, version, counter):
+                checksum = add_to_checksum(checksum, value)
+                _LOGGER.debug("C: %s V: %s", checksum, value)
 
-    def _decode_sense_packet(self, version, packet):
-        """Decode a sense packet into the list of sensors."""
+            # Length includes the four header bytes and the checksum, but
+            # excludes the additional header marker and payload escape padding.
+            payload = bytearray()
+            valid = True
+            for _ in range(length - 5):
+                value = (await self._input.read_byte())
+                payload.append(value)
+                checksum = add_to_checksum(checksum, value)
+                _LOGGER.debug("C: %s V: %s", checksum, value)
+                if value == 2:
+                    padding = (await self._input.read_byte())
+                    if padding != 0:
+                        # An unescaped 2 starts a new frame. Reuse its next
+                        # byte as the length (or additional header marker), rather
+                        # than discarding the beginning of that frame.
+                        pending_length = padding
+                        valid = False
+                        break
+            if not valid:
+                continue
+            if (await self._input.read_byte()) != checksum:
+                continue
 
-        data = self._sense_packet_to_data(packet)
+            return Message(version, counter, bytes(payload), frame_type)
 
-        offset = 4
-        i = 0
-
-        datalen = len(data) - offset - 6
-        temp_count = int(datalen / 2)
-        temp = []
-
-        for i in range(temp_count):
-            temp_index = i * 2 + offset
-            temp.append(self._decode_temp(data[temp_index], data[temp_index + 1]))
-
-        self._debug(PROP_LOGLEVEL_DEBUG, "T: " + str(temp))
-
-        for sensor in self._sense_sensor:
-            if (sensor.sensor_type == PROP_SENSOR_TEMPERATURE):
-                sensor.value = temp[sensor.index]
-            elif (sensor.sensor_type == PROP_SENSOR_RAW):
-                sensor.value = packet
-
-        self._debug(PROP_LOGLEVEL_DEBUG, str(self))
-
-    def _decode_ctrl_packet(self, version, packet):
-        """Decode a control packet into the list of sensors."""
-
-        for i in range(5):
-            input_bit = packet[i]
-            self._debug(PROP_LOGLEVEL_DEBUG, "Byte " + str(i) + ": " + str((input_bit >> 7) & 1) + str((input_bit >> 6) & 1) + str((input_bit >> 5) & 1) + str((input_bit >> 4) & 1) + str((input_bit >> 3) & 1) + str((input_bit >> 2) & 1) + str((input_bit >> 1) & 1) + str(input_bit & 1))
-
-        for sensor in self._ctrl_sensor:
-            if (sensor.sensor_type == PROP_SENSOR_FLAG):
-                sensor.value = (packet[sensor.index // 8] >> (sensor.index % 8)) & 1
-            elif (sensor.sensor_type == PROP_SENSOR_RAW):
-                sensor.value = packet
-
-    def get_sensors(self):
-        """Return the list of sensors."""
-        return self._sense_sensor + self._ctrl_sensor
+    def _log_message(self, message: Message) -> None:
+        """Log the completed message and its results using the existing format."""
+        summary = "\n\nMessage ID %d frame_type=%s counter=%d length=%d" % (
+            message.message_id, message.frame_type.name, message.counter, len(message.payload))
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            summary += " payload=" + message.payload.hex(" ")
+        _LOGGER.info(summary)
+        for sensor in self._sensors.get(message.message_id, []):
+            level = (logging.DEBUG if sensor.sensor_type == PROP_SENSOR_RAW
+                     else logging.INFO)
+            _LOGGER.log(level, "%s", sensor)
+        if message.message_id in self._config.get('decode', []):
+            for line in decode_pairs(message.message_id, message.payload):
+                _LOGGER.info("%s", line)
 
     def __str__(self):
         """Returns an informational text representation of the object."""
         ret = ""
 
-        for sensor in self._sense_sensor:
-            ret = ret + str(sensor) + "\n"
-
-        for sensor in self._ctrl_sensor:
+        for sensor in self.get_sensors():
             ret = ret + str(sensor) + "\n"
 
         return ret
 
-    def run(self):
-        """Main thread that reads from input and populates the sensors."""
-        while (self._run_thread):
-            (mode, version, packet) = self._read_packet()
-            if (mode == PROP_PACKET_SENSE):
-                self._decode_sense_packet(version, packet)
-            elif (mode == PROP_PACKET_CTRL):
-                self._decode_ctrl_packet(version, packet)
+    def _update_sensors(self, message: Message) -> None:
+        """Apply the already parsed values to this message's sensors."""
+        for sensor, value in zip(self._sensors.get(message.message_id, []), message.values):
+            sensor.value = value
+            self._sensors_by_key[sensor.key].value = value
 
-    def run_thread(self):
-        """Run the main thread."""
-        self._run_thread = True
-        self._thread.start()
+    ## Public API
 
-    def stop_thread(self):
-        """Stop the main thread."""
-        self._run_thread = False
+    def get_sensors(self):
+        """Return one sensor per key, holding its latest received value."""
+        return list(self._sensors_by_key.values())
 
-    def is_alive(self):
-        """Determine if thread is alive."""
-        return self._thread.is_alive()
+    async def listen_forever(self) -> None:
+        """Update sensors and log messages until EOF; allow only one listener.
+
+        Await directly or run as a task. Cancellation discards partial frames
+        but retains sensor readings and the connection; call close() to release it.
+        """
+
+        # Ensure sensors have been loaded
+        if not self._sensors: self.load_sensors()
+
+        while True:
+            message = await self._read_message()
+            parse_message(self._sensors, message)
+            self._update_sensors(message)
+            self._log_message(message)
+
+    async def listen_for(self, seconds=1):
+        """Update sensors for at most seconds, or until EOF; discard partial frames."""
+        listener = asyncio.create_task(self.listen_forever())
+        try:
+            done, _ = await asyncio.wait({listener}, timeout=seconds)
+            if done:
+                listener.result()
+        finally:
+            listener.cancel()
+            try:
+                await listener
+            except asyncio.CancelledError:
+                pass
+
+
+def _print_summary(kwb):
+    """Print sensor values in alphabetical order."""
+    print("\n\n---\nSUMMARY: " + time.strftime("%Y-%m-%d %H:%M:%S %Z"))
+    for sensor in sorted(kwb.get_sensors(), key=lambda sensor: sensor.name.casefold()):
+        if sensor.sensor_type != PROP_SENSOR_RAW:
+            print(sensor)
 
 
 def main():
     """Main method for debug purposes."""
     parser = argparse.ArgumentParser()
+    group_execution = parser.add_argument_group('Execution')
+    group_execution.add_argument('--wait', type=float, default=5,
+                                 help="Seconds to listen; ignored with --forever (default: 5)")
+    group_execution.add_argument('--forever', action='store_true', default=False,
+                                 help="Listen continuously until input closes or interrupted")
+    group_execution.add_argument('--include-unkeyed', action='store_true', default=False,
+                                 help="Also load CSV rows without keys, generating keys from names")
+    group_execution.add_argument('--decode', nargs='*', type=int, default=[], metavar='ID',
+                                 help="Also decode two-byte values from offsets 3 and 4 for these message IDs (0-255)")
     group_tcp = parser.add_argument_group('TCP')
     group_tcp.add_argument('--tcp', dest='mode', action='store_const', const=PROP_MODE_TCP, help="Set tcp mode")
     group_tcp.add_argument('--host', dest='hostname', help="Specify hostname", default='')
@@ -458,13 +386,68 @@ def main():
     group_file = parser.add_argument_group('File')
     group_file.add_argument('--file', dest='mode', action='store_const', const=PROP_MODE_FILE, help="Set file mode")
     group_file.add_argument('--name', dest='file', help="Specify file name", default='')
+    group_terminal = parser.add_argument_group('Terminal')
+    log_levels = {
+        'none': logging.CRITICAL + 1,
+        'error': logging.ERROR,
+        'warn': logging.WARNING,
+        'warning': logging.WARNING,
+        'info': logging.INFO,
+        'debug': logging.DEBUG,
+    }
+    group_terminal.add_argument('--log-level', type=str.lower, choices=log_levels,
+                                default='info', help="Log verbosity (default: info)")
+    group_terminal.add_argument('--log', choices=('true', 'false'), default='true',
+                                help="Print individual messages; false overrides --log-level (default: true)")
+    group_terminal.add_argument('--summary', action='store_true', default=True,
+                                help="Print sensor summaries (default: true)")
+    group_terminal.add_argument('--no-summary', dest='summary', action='store_false',
+                                help="Disable sensor summaries")
     args = parser.parse_args()
 
-    kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, 0, args.file)
-    kwb.run_thread()
-    time.sleep(5)
-    kwb.stop_thread()
-    print(kwb)
+    # Validate inputs
+    if not 0 <= args.wait < float('inf'):
+        parser.error('--wait must be a finite, non-negative number')
+    
+    # Construct KWBEasyfire connector
+    kwb = KWBEasyfire(args.mode, args.hostname, args.port, args.interface, SERIAL_SPEED,
+                     args.file, _config={'decode': args.decode,
+                                         'include_unkeyed': args.include_unkeyed})
+    kwb.load_sensors()
+
+    # Configure logging
+    handler = logging.StreamHandler(sys.stdout)
+    level = logging.CRITICAL + 1 if args.log == 'false' else log_levels[args.log_level]
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter('%(message)s'))
+    handler.addFilter(lambda record: getattr(record, 'terminal', True))
+    previous_level, previous_propagate = _LOGGER.level, _LOGGER.propagate
+    _LOGGER.setLevel(level)
+    _LOGGER.propagate = False
+    _LOGGER.addHandler(handler)
+
+    async def listen():
+        try:
+            if args.forever:
+                await kwb.listen_forever()
+            else:
+                await kwb.listen_for(seconds=args.wait)
+        finally:
+            await kwb.close()
+
+    try:
+        asyncio.run(listen())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _LOGGER.removeHandler(handler)
+        handler.close()
+        _LOGGER.setLevel(previous_level)
+        _LOGGER.propagate = previous_propagate
+        
+    # Summarize if requested
+    if args.summary:
+        _print_summary(kwb)
 
 
 if __name__ == "__main__":
